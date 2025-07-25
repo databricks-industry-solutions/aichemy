@@ -7,7 +7,9 @@
 ## Usage
 #### 1. Chat with your chemical library, e.g. Drugbank
 Powered by [AI/BI Genie](https://www.databricks.com/product/business-intelligence/ai-bi-genie) to generate text-to-SQL to query your chemical library
-![ ](./apps/app/logo.svg)
+<br>
+<br>
+<img width="150" src="https://raw.githubusercontent.com/yenlow/aichemy-demo/refs/heads/main/apps/app/logo.svg"/>
 ![ ](./img/genie_drugbank.png)
 
 #### 2. Search [PubChem](https://pubchem.ncbi.nlm.nih.gov/) via [PUG REST API](https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest)
@@ -18,6 +20,8 @@ Supports exact/substructure/superstructure search by SMILES, name, CID
 Find structurally similar molecules in your chemical library based on molecular fingerprints. Powered by [Databricks Vector Search](https://www.databricks.com/product/machine-learning/vector-search).
 ![ ](./img/vectorsearch.png)
 
+
+-----------------------------------
 ## Installation
 1. Clone this repo into your Databricks workspace as a git folder
 
@@ -37,6 +41,8 @@ Find structurally similar molecules in your chemical library based on molecular 
 
 NB: Genie spaces need to be [created](https://docs.databricks.com/aws/en/genie/set-up) via the UI
 
+
+---------------------------------
 ## Contributing
 1. **git clone** this project locally
 2. Utilize the Databricks CLI to test your changes against a Databricks workspace of your choice
