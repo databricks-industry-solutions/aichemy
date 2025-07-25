@@ -1,0 +1,7 @@
+command:
+- streamlit
+- run
+- app.py
+env:
+- name: vs_index_zinc
+  value: healthcare_lifesciences.qsar.zinc_vs
