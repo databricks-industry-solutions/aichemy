@@ -7,6 +7,7 @@
 ## Usage
 #### 1. Chat with your chemical library, e.g. Drugbank
 Powered by [AI/BI Genie](https://www.databricks.com/product/business-intelligence/ai-bi-genie) to generate text-to-SQL to query your chemical library
+![ ](./apps/app/logo.svg)
 ![ ](./img/genie_drugbank.png)
 
 #### 2. Search [PubChem](https://pubchem.ncbi.nlm.nih.gov/) via [PUG REST API](https://pubchem.ncbi.nlm.nih.gov/docs/pug-rest)
@@ -34,14 +35,14 @@ Find structurally similar molecules in your chemical library based on molecular 
 
 <img width="1527" height="880" alt="Screenshot 2025-07-23 at 11 10 13 AM" src="https://github.com/user-attachments/assets/0f612882-7123-449b-8349-1835bc59523c" />
 
-NB: Genie spaces need to be created via the UI
+NB: Genie spaces need to be [created](https://docs.databricks.com/aws/en/genie/set-up) via the UI
 
 ## Contributing
 1. **git clone** this project locally
 2. Utilize the Databricks CLI to test your changes against a Databricks workspace of your choice
 3. Contribute to repositories with pull requests (PRs), ensuring that you always have a second-party review from a capable teammate
 
-## 📄 Third-Party Package Licenses - FILL IN WITH YOUR PROJECT'S OPEN SOURCE PACKAGES + LICENSING
+## 📄 Third-Party Package Licenses
 &copy; 2025 Databricks, Inc. All rights reserved. The source in this project is provided subject to the Databricks License [https://databricks.com/db-license-source]. All included or referenced third party libraries are subject to the licenses set forth below.
 
 | Package | License | Copyright |
