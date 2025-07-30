@@ -240,6 +240,8 @@ with col1:
         if geniesearch_button:
             st.session_state.genie_search_clicked = True
 
+    st.text("Examples: What is ozempic and its molecular weight?\nList drugs with an azo group and their indications.")
+
     # Handle genie search
     genie_config_selected = genie_name_to_config(geniespace, genie_config)
     handle_genie_search(genie_config_selected)
