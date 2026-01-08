@@ -4,4 +4,4 @@ command:
 - app.py
 env:
 - name: vs_index_zinc
-  value: healthcare_lifesciences.qsar.zinc_vs
+  value: aichemy2_catalog.aichemy.zinc_vs

@@ -2,18 +2,17 @@
 vector_search:
   zinc:
     name: "ZINC"
-    index: "healthcare_lifesciences.qsar.zinc_vs"
+    index: "aichemy2_catalog.aichemy.zinc_vs"
     col_display: ["zinc_id", "mwt", "logp", 
                    "reactive", "purchasable", "tranche_name", 
-                   "smiles",
-                   "qed", "SPS", "TPSA", "FractionCSP3", "RingCount"]
+                   "smiles"]
     col_vector: ["ecfp"]
     col_simscore: ["score"]
 
 genie:
   drugbank:
     name: "DrugBank"
-    space_id: "01f068270f5c1f898e11703361dce5b8"
+    space_id: "01f0eaa5825418ce88ec537abc57fd77"
   zinc:
-    name: "ZINC"  
-    space_id: "01f06827afb91130a0ea0ce37a63d514"
+    name: "Zinc"
+    space_id: "01f0eaa5825418ce88ec537abc57fd77"
