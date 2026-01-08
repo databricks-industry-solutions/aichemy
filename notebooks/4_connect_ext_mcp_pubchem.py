@@ -17,11 +17,17 @@ cfg = ModelConfig(development_config="config.yml")
 
 mlflow.langchain.autolog()
 
-ws_client = WorkspaceClient(
-    host="https://fevm-aichemy2.cloud.databricks.com/",
-    client_id="dbb08096-2fd5-4668-bf95-aba8b7609d93",
-    client_secret="dosefb6c52dc36508a93f088740fcf4c8f49"
-)
+ws_client = WorkspaceClient()
+
+# COMMAND ----------
+
+pubchem_api = dbutils.secrets.get(scope="aichemy", key="pubchem_glama_api")
+
+# COMMAND ----------
+
+import os
+
+os.environ["pubchem_glama_api"] = pubchem_api
 
 # COMMAND ----------
 
@@ -32,7 +38,7 @@ ws_client = WorkspaceClient(
 
 # MAGIC %sh
 # MAGIC curl -i POST \
-# MAGIC   -H "Authorization: Bearer mcp_k1.WH08NeH2lsS2tSs087Eq8ZDwe0w1QYrzdOSId81Fz8I.tmhZ75j_MHLM" \
+# MAGIC   -H "Authorization: Bearer $pubchem_glama_api" \
 # MAGIC   -H "Content-Type: application/json" \
 # MAGIC   -H "Accept: application/json, text/event-stream" \
 # MAGIC   "https://glama.ai/endpoints/xb306rnopq/mcp" \
@@ -54,7 +60,7 @@ ws_client = WorkspaceClient(
 # MAGIC OPTIONS (
 # MAGIC   host 'https://glama.ai',
 # MAGIC   base_path '/endpoints/xb306rnopq/mcp/',
-# MAGIC   bearer_token 'mcp_k1.WH08NeH2lsS2tSs087Eq8ZDwe0w1QYrzdOSId81Fz8I.tmhZ75j_MHLM'
+# MAGIC   bearer_token secret('aichemy', 'pubchem_glama_api')
 # MAGIC )
 # MAGIC COMMENT 'Create connection with external Pubchem MCP server by Augmented Nature on glama.ai'
 # MAGIC ;

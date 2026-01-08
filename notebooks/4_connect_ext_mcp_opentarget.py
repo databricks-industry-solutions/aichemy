@@ -25,6 +25,16 @@ ws_client = WorkspaceClient()
 
 # COMMAND ----------
 
+opentargets_api = dbutils.secrets.get(scope="aichemy", key="opentargets_glama_api")
+
+# COMMAND ----------
+
+import os
+
+os.environ["opentargets_glama_api"] = opentargets_api
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Test connection to external MCP via CURL
 
@@ -32,7 +42,7 @@ ws_client = WorkspaceClient()
 
 # MAGIC %sh
 # MAGIC curl -i POST \
-# MAGIC   -H "Authorization: Bearer mcp_k1.IflPmhPDseCWsR0NiXVI0DZjLkp9_ImLoMtfZorRfKc.1uhC9PQuDSH6" \
+# MAGIC   -H "Authorization: Bearer $opentargets_glama_api" \
 # MAGIC   -H "Content-Type: application/json" \
 # MAGIC   -H "Accept: application/json, text/event-stream" \
 # MAGIC   "https://glama.ai/endpoints/w0rcnqusm3/mcp" \
@@ -54,7 +64,7 @@ ws_client = WorkspaceClient()
 # MAGIC OPTIONS (
 # MAGIC   host 'https://glama.ai',
 # MAGIC   base_path '/endpoints/w0rcnqusm3/mcp/',
-# MAGIC   bearer_token 'mcp_k1.IflPmhPDseCWsR0NiXVI0DZjLkp9_ImLoMtfZorRfKc.1uhC9PQuDSH6'
+# MAGIC   bearer_token secret('aichemy', 'opentargets_glama_api')
 # MAGIC )
 # MAGIC COMMENT 'Create connection with external Open Targets MCP server by Augmented Nature on glama.ai'
 # MAGIC ;
@@ -91,7 +101,7 @@ ws_client = WorkspaceClient()
 # MAGIC   headers => map(
 # MAGIC     'Content-Type', 'application/json',
 # MAGIC     'Accept', 'application/json, text/event-stream',
-# MAGIC     'Mcp-Session-Id', '462ffd58-708d-4140-a41e-8705778a5d8b'
+# MAGIC     'Mcp-Session-Id', '9d1dff35-ca3a-4b5f-967a-bb30c9b6c7d0'
 # MAGIC   )
 # MAGIC );
 
