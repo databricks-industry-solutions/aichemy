@@ -1,0 +1,21 @@
+host: https://fevm-aichemy2.cloud.databricks.com/
+catalog: aichemy2_catalog
+schema: aichemy
+llm_endpoint: databricks-gpt-5
+genie_space_id: 01f0eaa5825418ce88ec537abc57fd77
+genie_table: aichemy2_catalog.aichemy.drugbank_full
+uc_functions:
+  - aichemy2_catalog.aichemy.get_embedding
+uc_connections:
+  pubchem: conn_aichemy_pubchem
+  opentargets: conn_aichemy_opentargets
+retriever:
+  tool_name: zinc_chemical_search
+  vs_endpoint: zinc_vs
+  vs_index: aichemy2_catalog.aichemy.zinc_vs
+  vs_source: aichemy2_catalog.aichemy.zinc15_250k_full
+  k: 5
+# for agentic memory
+lakebase:
+  instance_name: aichemy
+  database: aichemy

@@ -1,1 +1,11 @@
-# Check here to get the latest version of the databricks-cli: https://github.com/databricks/cli
+mlflow>=3.3.2
+databricks-mcp
+databricks-vectorsearch
+databricks-langchain
+databricks-sdk
+langgraph-supervisor
+langgraph-checkpoint
+langgraph-checkpoint-postgres
+psycopg==3.2.13
+psycopg-binary==3.2.13
+psycopg-pool==3.2.8

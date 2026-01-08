@@ -1,7 +1,7 @@
 # Databricks Asset Bundle files
 .databricks/
-
 .github/
+data/
 
 # IDE files
 .vscode/
