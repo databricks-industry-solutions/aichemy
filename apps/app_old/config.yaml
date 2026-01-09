@@ -1,0 +1,18 @@
+# Configuration file for ChemSearch Streamlit App
+vector_search:
+  zinc:
+    name: "ZINC"
+    index: "aichemy2_catalog.aichemy.zinc_vs"
+    col_display: ["zinc_id", "mwt", "logp", 
+                   "reactive", "purchasable", "tranche_name", 
+                   "smiles"]
+    col_vector: ["ecfp"]
+    col_simscore: ["score"]
+
+genie:
+  drugbank:
+    name: "DrugBank"
+    space_id: "01f0eaa5825418ce88ec537abc57fd77"
+  zinc:
+    name: "Zinc"
+    space_id: "01f0eaa5825418ce88ec537abc57fd77"
