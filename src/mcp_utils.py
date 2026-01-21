@@ -39,10 +39,13 @@ nest_asyncio.apply()
 
 import re
 
-def get_default(text):
-    match = re.search(r'default:\s+([^\)]+)\)', text)
-    if match:
-        return match.group(1)
+def get_default(text: str):
+    if text:
+        match = re.search(r'default:\s+([^\)]+)\)', text)
+        if match:
+            return match.group(1)
+    else:
+        return None
     
 
 # Define a custom LangChain tool that wraps functionality for calling MCP servers
@@ -139,8 +142,10 @@ def create_langchain_tool_from_mcp(
             if isinstance(field_type_str, List):
                 field_type_str = "string"
         field_type = TYPE_MAPPING.get(field_type_str, str)
+        field_default = field_info.get("default", None)
         field_description = field_info.get("description", None)
-        field_default = get_default(field_description)
+        if field_description is not None and field_default is None:
+            field_default = get_default(field_description)
 
         if field_name in required:
             field_definitions[field_name] = (field_type, ...)

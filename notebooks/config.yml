@@ -1,14 +1,15 @@
 host: https://fevm-aichemy2.cloud.databricks.com/
 catalog: aichemy2_catalog
 schema: aichemy
-llm_endpoint: databricks-claude-sonnet-4-5
+llm_endpoint: databricks-claude-opus-4-5
 genie_space_id: 01f0eaa5825418ce88ec537abc57fd77
 genie_table: aichemy2_catalog.aichemy.drugbank_full
 uc_functions:
   - aichemy2_catalog.aichemy.get_embedding
-  - aichemy2_catalog.aichemy.molecule_png_as_markdown
+  - aichemy2_catalog.aichemy.molecule_png_url
 uc_connections:
   pubchem: conn_aichemy_pubchem
+  pubmed: conn_aichemy_pubmed
   opentargets: conn_aichemy_opentargets
 retriever:
   tool_name: zinc_chemical_search

@@ -2,10 +2,13 @@ mlflow>=3.3.2
 databricks-mcp
 databricks-vectorsearch
 databricks-langchain
-databricks-sdk
+databricks-sdk 
+langchain-core>=1.2.7
 langgraph-supervisor
 langgraph-checkpoint
 langgraph-checkpoint-postgres
+mcp>=1.22.0
+openai==2.14.0
 psycopg==3.2.13
 psycopg-binary==3.2.13
 psycopg-pool==3.2.8

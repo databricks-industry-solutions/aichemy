@@ -4,10 +4,6 @@
 
 # COMMAND ----------
 
-# MAGIC %pip freeze
-
-# COMMAND ----------
-
 # MAGIC %load_ext autoreload
 # MAGIC %autoreload 2
 
@@ -25,6 +21,16 @@ ws_client = WorkspaceClient()
 
 # COMMAND ----------
 
+pubmed_api = dbutils.secrets.get(scope="aichemy", key="pubmed_glama_api")
+
+# COMMAND ----------
+
+import os
+
+os.environ["pubmed_glama_api"] = pubmed_api
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ## Test connection to external MCP via CURL
 
@@ -32,9 +38,10 @@ ws_client = WorkspaceClient()
 
 # MAGIC %sh
 # MAGIC curl -i POST \
+# MAGIC   -H "Authorization: Bearer $pubmed_glama_api" \
 # MAGIC   -H "Content-Type: application/json" \
 # MAGIC   -H "Accept: application/json, text/event-stream" \
-# MAGIC   "https://mcp.platform.opentargets.org/mcp" \
+# MAGIC   "https://glama.ai/endpoints/sa8u3kr6ar/mcp" \
 # MAGIC   -d '{"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "curl-client", "version": "1.0"}}, "id": 1}' \
 # MAGIC   --max-time 60
 
@@ -47,16 +54,35 @@ ws_client = WorkspaceClient()
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC DROP CONNECTION IF EXISTS conn_aichemy_opentargets;
-# MAGIC CREATE CONNECTION conn_aichemy_opentargets
+# MAGIC DROP CONNECTION IF EXISTS conn_aichemy_pubmed;
+# MAGIC CREATE CONNECTION conn_aichemy_pubmed 
 # MAGIC TYPE HTTP
 # MAGIC OPTIONS (
-# MAGIC   host 'https://mcp.platform.opentargets.org',
-# MAGIC   base_path '/mcp/',
-# MAGIC   bearer_token 'anything'
+# MAGIC   host 'https://glama.ai',
+# MAGIC   base_path '/endpoints/sa8u3kr6ar/mcp/',
+# MAGIC   bearer_token secret('aichemy', 'pubmed_glama_api')
 # MAGIC )
-# MAGIC COMMENT 'Create connection with external Open Targets MCP server'
+# MAGIC COMMENT 'Create connection with external PubMed MCP server openpharma on glama.ai'
 # MAGIC ;
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Create UC connection to external MCP
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT http_request(
+# MAGIC     conn => 'conn_aichemy_pubmed',
+# MAGIC     method => 'POST',
+# MAGIC     path => '',
+# MAGIC     json => '{"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "curl-client", "version": "1.0"}}, "id": 1}',
+# MAGIC     headers => map(
+# MAGIC         'Content-Type', 'application/json',
+# MAGIC         'Accept', 'application/json, text/event-stream'
+# MAGIC     )
+# MAGIC )
 
 # COMMAND ----------
 
@@ -83,28 +109,14 @@ ws_client = WorkspaceClient()
 
 # MAGIC %sql
 # MAGIC SELECT http_request(
-# MAGIC   conn => 'conn_aichemy_opentargets',
+# MAGIC   conn => 'conn_aichemy_pubmed',
 # MAGIC   method => 'POST',
 # MAGIC   path => '',
-# MAGIC   json => '{"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "curl-client", "version": "1.0"}}, "id": 1}',
-# MAGIC   headers => map(
-# MAGIC     'Content-Type', 'application/json',
-# MAGIC     'Accept', 'application/json, text/event-stream'
-# MAGIC   )
-# MAGIC );
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT http_request(
-# MAGIC   conn => 'conn_aichemy_opentargets',
-# MAGIC   method => 'POST',
-# MAGIC   path => '',
-# MAGIC   json => '{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "search_entities", "arguments": {"query_strings": ["glp-1"]}}, "id": 2}',
+# MAGIC   json => '{"jsonrpc": "2.0", "method": "tools/call", "params": {"name": "search_compounds", "arguments": {"query": "aspirin"}}, "id": 2}',
 # MAGIC   headers => map(
 # MAGIC     'Content-Type', 'application/json',
 # MAGIC     'Accept', 'application/json, text/event-stream',
-# MAGIC     'Mcp-Session-Id', 'a7c7c59bf49c4fe0b7c573be6cd29f0d'
+# MAGIC     'Mcp-Session-Id', '86788fcd-90ad-4bc3-8567-75d82edd4e3c'
 # MAGIC   )
 # MAGIC );
 
@@ -119,13 +131,13 @@ from databricks.sdk.service.serving import ExternalFunctionRequestHttpMethod
 from pprint import pprint
 
 response = ws_client.serving_endpoints.http_request(
-  conn=cfg.get("uc_connections").get("opentargets"),
+  conn=cfg.get("uc_connections").get("pubmed"),
   method=ExternalFunctionRequestHttpMethod.POST,
   path="",
   json={"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2},
   headers={"Content-Type": "application/json",
     "Accept": "application/json, text/event-stream",
-    "Mcp-Session-Id": "a7c7c59bf49c4fe0b7c573be6cd29f0d"}\
+    "Mcp-Session-Id": "86788fcd-90ad-4bc3-8567-75d82edd4e3c"}\
 )
 pprint(response.__dict__)
 
@@ -138,16 +150,16 @@ pprint(response.__dict__)
 # COMMAND ----------
 
 # Use the patched DatabricksMCPClient to disable zstd decoding
-from databricks_mcp import DatabricksMCPClient
-#from src.databricks_mcp_client import DatabricksMCPClient
+# from databricks_mcp import DatabricksMCPClient
+from src.databricks_mcp_client import DatabricksMCPClient
 import nest_asyncio
 
 nest_asyncio.apply()
 
-server_url = f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("opentargets")}'
+server_url = f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("pubmed")}'
 mcp_client = DatabricksMCPClient(server_url=server_url, workspace_client=ws_client)
-mcp_client.list_tools()
+mcp_client.list_tools(timeout=60, terminate_on_close=False)
 
 # COMMAND ----------
 
-mcp_client.call_tool("search_targets", {"query": "glp-1"}, terminate_on_close=False, timeout=120)
+mcp_client.call_tool("search_pubmed", {"query": "GLP1"}, terminate_on_close=False)

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 client = get_deploy_client("databricks")
 user_info = get_user_info()
 
-st.set_page_config(page_title="ChemSearch", layout="wide")
+st.set_page_config(page_title="AiChemy", layout="wide")
 st.logo("logo.svg", size="large", link=None)
 
 # Streamlit app
@@ -64,11 +64,11 @@ if prompt := st.chat_input("Example: What is ozempic and its molecular weight?")
     # Display assistant response in chat message container
     with st.chat_message("assistant"):
         # Query the Databricks serving endpoint
-#        print(f"Last msg:{st.session_state.messages[-1]}")
+        # print(f"Last msg:{st.session_state.messages[-1]}")
         response_json = ask_agent_mlflowclient(
             input_dict=st.session_state.messages[-1], client=client
         )  # returns response.json()
-#        pprint(response_json)
+        # pprint(response_json)
         text_contents = extract_text_content(response_json)
         if len(text_contents) > 0:
             # # Join all text contents
@@ -77,6 +77,7 @@ if prompt := st.chat_input("Example: What is ozempic and its molecular weight?")
             )
         else:
             assistant_response = "No response. Retry or reset the chat."
+        print(assistant_response)
         st.markdown(assistant_response)
 
         custom_outputs = response_json.get("custom_outputs", {})
