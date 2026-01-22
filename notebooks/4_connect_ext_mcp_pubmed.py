@@ -41,7 +41,7 @@ os.environ["pubmed_glama_api"] = pubmed_api
 # MAGIC   -H "Authorization: Bearer $pubmed_glama_api" \
 # MAGIC   -H "Content-Type: application/json" \
 # MAGIC   -H "Accept: application/json, text/event-stream" \
-# MAGIC   "https://glama.ai/endpoints/sa8u3kr6ar/mcp" \
+# MAGIC   "https://glama.ai/endpoints/mp1ke6xrpi/mcp" \
 # MAGIC   -d '{"jsonrpc": "2.0", "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "curl-client", "version": "1.0"}}, "id": 1}' \
 # MAGIC   --max-time 60
 
@@ -59,7 +59,7 @@ os.environ["pubmed_glama_api"] = pubmed_api
 # MAGIC TYPE HTTP
 # MAGIC OPTIONS (
 # MAGIC   host 'https://glama.ai',
-# MAGIC   base_path '/endpoints/sa8u3kr6ar/mcp/',
+# MAGIC   base_path '/endpoints/mp1ke6xrpi/mcp/',
 # MAGIC   bearer_token secret('aichemy', 'pubmed_glama_api')
 # MAGIC )
 # MAGIC COMMENT 'Create connection with external PubMed MCP server openpharma on glama.ai'

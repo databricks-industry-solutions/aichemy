@@ -116,7 +116,7 @@ os.environ["pubchem_glama_api"] = pubchem_api
 # MAGIC   headers => map(
 # MAGIC     'Content-Type', 'application/json',
 # MAGIC     'Accept', 'application/json, text/event-stream',
-# MAGIC     'Mcp-Session-Id', '5bdcce71-207b-4158-871a-06afe8e2d2c1'
+# MAGIC     'Mcp-Session-Id', '68c0168e-fea4-4411-b436-398e10f1ede4'
 # MAGIC   )
 # MAGIC );
 
