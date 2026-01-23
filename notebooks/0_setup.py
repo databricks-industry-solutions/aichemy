@@ -1,5 +1,5 @@
 # Databricks notebook source
-# MAGIC %pip install -U mlflow databricks-sdk psycopg psycopg_pool
+# MAGIC %pip install -U mlflow databricks-sdk psycopg psycopg_pool rdkit
 # MAGIC %restart_python
 
 # COMMAND ----------
@@ -78,3 +78,43 @@ dbClient = LakebaseConnect(
     wsClient = ws_client
 )
 dbClient.test_query()
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Create functions as tools
+# MAGIC 1. `molecule_png_url` to get the molecule image URL from PubChem based on the CID
+# MAGIC 2. `get_embedding` to compute molecular fingerprint embeddings for searching ZINC vector store
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE FUNCTION aichemy2_catalog.aichemy.molecule_png_url(cid INTEGER)
+# MAGIC RETURNS STRING
+# MAGIC COMMENT 'Returns the molecule image url of a CID from PubChem'
+# MAGIC LANGUAGE PYTHON
+# MAGIC AS $$
+# MAGIC url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{str(cid)}/png"
+# MAGIC return url
+# MAGIC $$;
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC CREATE OR REPLACE FUNCTION aichemy2_catalog.aichemy.get_embedding(smiles STRING)
+# MAGIC RETURNS STRING
+# MAGIC COMMENT 'Returns the ECFP molecular fingerprint from SMILES'
+# MAGIC LANGUAGE PYTHON
+# MAGIC ENVIRONMENT (
+# MAGIC   dependencies = '["rdkit"]',
+# MAGIC   environment_version = 'None'
+# MAGIC )
+# MAGIC AS $$
+# MAGIC from rdkit.Chem import MolFromSmiles
+# MAGIC from rdkit.Chem.AllChem import GetMorganGenerator
+# MAGIC fpgen = GetMorganGenerator(radius=2, fpSize=1024)
+# MAGIC mol = MolFromSmiles(smiles)
+# MAGIC vector = fpgen.GetFingerprintAsNumPy(mol)
+# MAGIC bitstring = "".join([str(i) for i in vector])
+# MAGIC return bitstring
+# MAGIC $$;

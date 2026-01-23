@@ -132,7 +132,39 @@ pprint(response.__dict__)
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Option 3: `DatabricksMCPClient`
+# MAGIC ## Option 3: `DatabricksMultiServerMCPClient` from `databricks-langchain`
+
+# COMMAND ----------
+
+from databricks_langchain import DatabricksMCPServer, DatabricksMultiServerMCPClient
+import asyncio
+
+mcp_client = DatabricksMultiServerMCPClient([
+    DatabricksMCPServer(
+        name="opentargets",
+        url=f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("opentargets")}',
+    )
+])
+await mcp_client.get_tools()
+
+# COMMAND ----------
+
+server_name = None
+server_names = [server_name] if server_name is not None else list(mcp_client.connections.keys())
+print(server_names)
+load_tool_tasks = [
+    asyncio.create_task(
+        super(DatabricksMultiServerMCPClient, mcp_client).get_tools(server_name=name)
+    )
+    for name in server_names
+]
+tools_list = await asyncio.gather(*load_tool_tasks,  return_exceptions=True)
+tools_list
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Option 4: `DatabricksMCPClient` from `databricks-mcp`
 # MAGIC Needs to be patched to disable zstd decoding and allow kwargs into `streamablehttp_client`
 
 # COMMAND ----------

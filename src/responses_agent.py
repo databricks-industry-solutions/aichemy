@@ -1,4 +1,6 @@
+import os
 import json
+import asyncio
 from uuid import uuid4
 from langchain_core.messages import (
     AIMessage,
@@ -6,135 +8,112 @@ from langchain_core.messages import (
     BaseMessage,
     convert_to_openai_messages,
 )
+from databricks.sdk import WorkspaceClient
 from mlflow.pyfunc import ResponsesAgent
 from mlflow.types.responses import (
     ResponsesAgentRequest,
     ResponsesAgentResponse,
-    ResponsesAgentStreamEvent
+    ResponsesAgentStreamEvent,
+    output_to_responses_items_stream,
 )
-from typing import Any, Generator, Optional, Union
-from langgraph.graph.state import CompiledStateGraph, StateGraph
-from psycopg_pool import ConnectionPool
-from langgraph.checkpoint.postgres import PostgresSaver
-#import inspect
+from databricks_langchain import AsyncCheckpointSaver
+from typing import Any, Generator, Optional
+from langgraph.graph.state import StateGraph
+import logging
 
-#print(inspect.getsource(uuid4))
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 class WrappedAgent(ResponsesAgent):
     def __init__(self, 
-                 agent: Union[CompiledStateGraph, StateGraph], 
-                 conninfo: str = None):
-        # if without memory
-        if isinstance(agent, CompiledStateGraph):
-            self.agent = agent
-            self.workflow = None
-            self.conninfo = conninfo
-            self.pool = None
-            self.checkpointer = None
-        # if with memory
-        elif isinstance(agent, StateGraph):
-            self.agent = None
-            self.workflow = agent
-            self.conninfo = conninfo
-            self.pool = ConnectionPool(
-                conninfo=self.conninfo,
-                kwargs={'autocommit': True},
-                min_size=1,
-                max_size=10,
-                open=True)
-            self.checkpointer = PostgresSaver(self.pool)
-        else:
-            raise Exception("agent must be either a langgraph CompiledStateGraph or a StateGraph")
+                 workflow: StateGraph,
+                 workspace_client: WorkspaceClient,
+                 lakebase_instance: str):
+        self.workflow = workflow
+        self.workspace_client = workspace_client or WorkspaceClient()
+        self.lakebase_instance = lakebase_instance
 
-    def _add_memory(self):
-        if self.workflow is not None and self.checkpointer is not None:
-            self.agent = self.workflow.compile(checkpointer=self.checkpointer)
-        elif self.workflow is not None and self.checkpointer is None:
+    def _add_memory(self, checkpointer: AsyncCheckpointSaver):
+        if self.workflow is not None and checkpointer is not None:
+            return self.workflow.compile(checkpointer=checkpointer)
+        elif self.workflow is not None and checkpointer is None:
             # No memory
-            self.agent = self.workflow.compile()
             print("No checkpointer found so compiling workflow without memory")
+            return self.workflow.compile()
+        
+    def _get_or_create_thread_id(self, request: ResponsesAgentRequest) -> str:
+        """Get thread_id from request or create a new one.
 
-    def _langchain_to_responses(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        "Convert from ChatCompletion dict to Responses output item dictionaries"
-        for message in messages:
-            message = message.model_dump()
-            role = message["type"]
-            if role == "ai":
-                if tool_calls := message.get("tool_calls"):
-                    return [
-                        self.create_function_call_item(
-                            id=message.get("id") or str(uuid4()),
-                            call_id=tool_call["id"],
-                            name=tool_call["name"],
-                            arguments=json.dumps(tool_call["args"]),
-                        )
-                        for tool_call in tool_calls
-                    ]
-                else:
-                    return [
-                        self.create_text_output_item(
-                            text=message["content"],
-                            id=message.get("id") or str(uuid4()),
-                        )
-                    ]
-            elif role == "tool":
-                return [
-                    self.create_function_call_output_item(
-                        call_id=message["tool_call_id"],
-                        output=message["content"],
-                    )
-                ]
-            elif role == "user":
-                return [message]
+        Priority:
+        1. Use thread_id from custom_inputs if present
+        2. Use conversation_id from chat context if available
+        3. Generate a new UUID
+
+        Returns:
+            thread_id: The thread identifier to use for this conversation
+        """
+        ci = dict(request.custom_inputs or {})
+
+        if "thread_id" in ci:
+            return ci["thread_id"]
+
+        # using conversation id from chat context as thread id
+        # https://mlflow.org/docs/latest/api_reference/python_api/mlflow.types.html#mlflow.types.agent.ChatContext
+        if request.context and getattr(request.context, "conversation_id", None):
+            return request.context.conversation_id
+
+        # Generate new thread_id
+        return str(uuid4())
 
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
+        thread_id = self._get_or_create_thread_id(request)
+        # request.custom_inputs.set("thread_id", thread_id)
+        cc_msgs = self.prep_msgs_for_cc_llm([i.model_dump() for i in request.input])
+        config = {"configurable": {"thread_id": thread_id}}
+        async def apredict(cc_msgs, config):
+            events = []
+            async for event in self.agent.astream(
+                {
+                    "messages": cc_msgs, 
+                    "recursion_limit": request.custom_inputs.get("recursion_limit", 25)
+                }, 
+               config = config,
+               stream_mode=["updates", "messages"]
+            ):
+                events.append(event)
+            return events
+
+        async def apredict_mem(cc_msgs, config):
+            async with AsyncCheckpointSaver(
+                instance_name=self.lakebase_instance, 
+                workspace_client=self.workspace_client
+                ) as checkpointer:
+                # if first time
+                # await checkpointer.setup()
+                self.agent = self._add_memory(checkpointer)
+                return await apredict(cc_msgs, config)
+            
+        events = asyncio.run(apredict_mem(cc_msgs, config))
+
         outputs = []
-        for event in self.predict_stream(request):
-            if event.type == "response.output_item.done":
-                outputs.append(event.item)
-                # overwrite with latest as thread_id is constant through the stream
-                custom_outputs = event.custom_outputs
-        return ResponsesAgentResponse(output=outputs, custom_outputs=custom_outputs)
-
-    def predict_stream(
-        self,
-        request: ResponsesAgentRequest,
-    ) -> Generator[ResponsesAgentStreamEvent, None, None]:
-        try:
-            config = {"configurable": {"thread_id": request.custom_inputs.get("thread_id", str(uuid4()))}}
-        except Exception as e:
-            config = {"configurable": {"thread_id": str(uuid4())}}
-
-        cc_msgs = []
-        for msg in request.input:
-            cc_msgs.extend(self._responses_to_cc(msg.model_dump()))
-
-        if self.checkpointer:
-            self._add_memory()
-        for event in self.agent.stream(
-            {
-                "messages": cc_msgs, 
-                "recursion_limit": request.custom_inputs.get("recursion_limit", 25)
-            }, 
-            config=config, 
-            stream_mode=["updates", "messages"]
-        ):
+        for event in events:
+            # if event.type == "response.output_item.done":
+            #     outputs.append(event.item)
             if event[0] == "updates":
                 for node_data in event[1].values():
-                    if node_data:
-                        for item in self._langchain_to_responses(node_data.get("messages")):
-                            yield ResponsesAgentStreamEvent(
-                                type="response.output_item.done", 
-                                item=item,
-                                custom_outputs={"thread_id": config["configurable"]["thread_id"]})
-            # filter the streamed messages to just the generated text messages
+                    if len(node_data.get("messages", [])) > 0:
+                        #yield from output_to_responses_items_stream(node_data["messages"])
+                        items = list(output_to_responses_items_stream(node_data["messages"]))
+                        outputs.extend([item.item for item in items if item.type == "response.output_item.done"])
             elif event[0] == "messages":
                 try:
                     chunk = event[1][0]
-                    if isinstance(chunk, AIMessageChunk) and (content := chunk.content):
-                        yield ResponsesAgentStreamEvent(
-                            **self.create_text_delta(delta=content, item_id=chunk.id),
-                            custom_outputs={"thread_id": config["configurable"]["thread_id"]}
-                        )
-                except Exception as e:
-                    print(e)
+                    if isinstance(chunk, AIMessageChunk) and chunk.content:
+                        # yield ResponsesAgentStreamEvent(
+                        #     **self.create_text_delta(delta=chunk.content, item_id=chunk.id),
+                        # )
+                        text_item = self.create_text_output_item(text=chunk.content, id=chunk.id)
+                        outputs.append(text_item)
+                except Exception as exc:
+                    logger.error("Error streaming chunk: %s", exc)
+        return ResponsesAgentResponse(output=outputs, custom_outputs=request.custom_inputs)

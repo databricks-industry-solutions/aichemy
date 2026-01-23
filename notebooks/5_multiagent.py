@@ -11,7 +11,6 @@
 # COMMAND ----------
 
 # MAGIC %pip install -r ../requirements.txt
-# MAGIC %pip install rdkit
 # MAGIC # %pip install -U databricks-connect # ensure 17+
 # MAGIC dbutils.library.restartPython()
 
@@ -23,6 +22,11 @@
 # COMMAND ----------
 
 # MAGIC %pip freeze > requirements_agent.txt
+
+# COMMAND ----------
+
+# Test that databricks-langchain[memory] was installed
+from databricks_ai_bridge.lakebase import AsyncLakebasePool
 
 # COMMAND ----------
 
@@ -45,8 +49,8 @@ client_id, client_secret = get_SP_credentials(
     client_id_key='client_id', #if retrieving secrets (but doesn't work with mlflow logging)
     client_secret_key='client_secret', #if retrieving secrets (but doesn't work with mlflow logging)
     # must provide hardcoded values as mlflow log_model cannot retrieve secrets
-    client_id_value = "dbb08096-2fd5-4668-bf95-aba8b7609d93", # Hardcode client_id if any
-    client_secret_value = "dosefb6c52dc36508a93f088740fcf4c8f49" # Hardcode client_secret if any
+    client_id_value = "client_id", # Hardcode client_id if any
+    client_secret_value = "client_secret" # Hardcode client_secret if any
 )
 ws_client = WorkspaceClient(
     host=cfg.get("host"),
@@ -59,45 +63,6 @@ ws_client = WorkspaceClient(
 from databricks_langchain import ChatDatabricks
 
 llm = ChatDatabricks(endpoint=cfg.get("llm_endpoint"))
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Create `get_embedding` function
-# MAGIC To compute molecular fingerprint embeddings for searching ZINC vector store
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC CREATE OR REPLACE FUNCTION aichemy2_catalog.aichemy.get_embedding(smiles STRING)
-# MAGIC RETURNS STRING
-# MAGIC COMMENT 'Returns the ECFP molecular fingerprint from SMILES'
-# MAGIC LANGUAGE PYTHON
-# MAGIC ENVIRONMENT (
-# MAGIC   dependencies = '["rdkit"]',
-# MAGIC   environment_version = 'None'
-# MAGIC )
-# MAGIC AS $$
-# MAGIC from rdkit.Chem import MolFromSmiles
-# MAGIC from rdkit.Chem.AllChem import GetMorganGenerator
-# MAGIC fpgen = GetMorganGenerator(radius=2, fpSize=1024)
-# MAGIC mol = MolFromSmiles(smiles)
-# MAGIC vector = fpgen.GetFingerprintAsNumPy(mol)
-# MAGIC bitstring = "".join([str(i) for i in vector])
-# MAGIC return bitstring
-# MAGIC $$;
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC CREATE OR REPLACE FUNCTION aichemy2_catalog.aichemy.molecule_png_url(CID INTEGER)
-# MAGIC RETURNS STRING
-# MAGIC COMMENT 'Returns the molecule image url of a CID from PubChem'
-# MAGIC LANGUAGE PYTHON
-# MAGIC AS $$
-# MAGIC url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{str(cid)}/png"
-# MAGIC return url
-# MAGIC $$;
 
 # COMMAND ----------
 
@@ -179,117 +144,72 @@ zinc_agent = create_agent(
 
 # COMMAND ----------
 
+from databricks_langchain import DatabricksMultiServerMCPClient, DatabricksMCPServer, MCPServer
+
+mcp_client = DatabricksMultiServerMCPClient(
+    [
+        DatabricksMCPServer(
+            name="pubchem",
+            url=f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("pubchem")}',
+            workspace_client=ws_client,
+            timeout=60,
+            terminate_on_close=False
+        ),
+        DatabricksMCPServer(
+            name="pubmed",
+            url=f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("pubmed")}',
+            workspace_client=ws_client,
+            terminate_on_close=False
+        ),
+        # Using the UC connection url doesn't work
+        # DatabricksMCPServer(
+        #     name="opentargets",
+        #     url=f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("opentargets")}',
+        #     workspace_client=ws_client
+        # ),
+        # Using the original url works
+        MCPServer(
+            name="opentargets",
+            url="https://mcp.platform.opentargets.org/mcp",
+#            headers={"X-API-Key": "no_bearer_token"},
+        ),
+    ]
+)
+
+# COMMAND ----------
+
 import asyncio
-from src.mcp_utils import create_mcp_tools
+import nest_asyncio
+nest_asyncio.apply()
 
-server_url = f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("pubchem")}'
-pubchem_tools = asyncio.run(
-    create_mcp_tools(
-        ws=ws_client,
-        managed_server_urls=[server_url],
-        custom_server_urls=None
-    )
-)
-pubchem_prompt = 'You are a helpful agent connected to an external Pubchem MCP server that provides everything about chemical compounds. Most tools (e.g. get_compound_info) expect a CID. The get_compound_properties tool expects an array argument listing the required properties (e.g. ["XlogP", "MolecularWeight"])'
-pubchem_agent = create_agent(
-    llm, tools=pubchem_tools, system_prompt=pubchem_prompt, name="pubchem_mcp"
-)
-
-# COMMAND ----------
-
-import asyncio
-from src.mcp_utils import create_mcp_tools
-
-server_url = f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("pubmed")}'
-pubmed_tools = asyncio.run(
-    create_mcp_tools(
-        ws=ws_client,
-        managed_server_urls=[server_url],
-        custom_server_urls=None
-    )
-)
-pubmed_prompt = 'You are a helpful agent connected to an external PubMed MCP server with the pubmed_articles tool that can search the biomedical literature (search_pubmed), get their metadata (get_article_metadata method) and download pdfs (get_paper_fulltext).'
-pubmed_agent = create_agent(
-    llm, tools=pubmed_tools, system_prompt=pubmed_prompt, name="pubmed_mcp"
+def get_tools(mcp_client: DatabricksMultiServerMCPClient):
+    async def aget_tools():
+        await mcp_client.get_tools()
+    return asyncio.run(aget_tools())
+mcp_tools = get_tools(mcp_client)
+mcp_prompt = """You are a multi-MCP server agent connected to:
+1. PubChem MCP server that provides everything about chemical compounds
+2. PubMed MCP server that searches biomedical literature and retrieves free full text if any. 
+3. OpenTargets MCP server that provides everything about drug targets and their associations with diseases and drugs.
+Most PubChem tools (e.g. get_compound_info) except for search_compounds expect a CID."""
+mcp_agent = create_agent(
+    llm, tools=mcp_tools, system_prompt=mcp_prompt, name="mcp"
 )
 
 # COMMAND ----------
 
-server_url = f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("opentargets")}'
-opentargets_tools = asyncio.run(
-    create_mcp_tools(
-        ws=ws_client,
-        managed_server_urls=[server_url],
-        custom_server_urls=None
-    )
-)
-opentargets_prompt = 'You are a helpful agent connected to an external OpenTargets MCP server that provides everything about drug targets and their associations with diseases and drugs.'
-opentargets_agent = create_agent(
-    llm, tools=opentargets_tools, system_prompt=opentargets_prompt, name="opentargets_mcp"
-)
+# 42 sec when using MultiServerMCPClient vs 1.88 min databricks-mcp
+# input_example = {
+#     "messages": [
+#         {
+#             "role": "user",
+#             "content": "What is the mw of danuglipron?"
+#         }
+#     ]
+# }
+# await mcp_agent.ainvoke(input_example)
 
 # COMMAND ----------
-
-# MAGIC %md
-# MAGIC ## Add memory using Lakebase Postgres backend
-
-# COMMAND ----------
-
-from langgraph_supervisor import create_supervisor
-
-supervisor_prompt = """You are a supervisor managing several agents:
-1. Drugbank agent: generates text-to-SQL queries to Drugbank of FDA-approved drugs and their properties
-2. ZINC agent: searches for drug-like molecules and their properties from the ZINC database based on ECFP4 molecular fingerprint embeddings represented as a 1024-char bitstring.
-3. Chem utilities agent: display molecule image PNG files from PubChem website by CID in markdown or compute ECFP4 molecular fingerprint embeddings in a 1024-char bitstring for a given SMILES structure. If missing SMILES input, query it from a chemical name using the PubChem MCP agent's search_compound tool.
-4. PubChem MCP: looks up chemical compounds and their properties including CID, SMILES structures, descriptors and ADMET from the PubChem MCP server. Do not use Pubchem MCP to compute fingerprints or embeddings or use calculate_descriptors tool.
-5. PubMed MCP: looks up or download biomedical articles on PubMed by keywords, metadata or PMID.
-6. OpenTargets MCP: looks up drug-target-disease associations in the OpenTargets MCP server to assist in drug discovery research.
-
-Because you are an autonomous multi-agent system, do not ask for more follow up information. Instead, use chain-of-thought to reason and break down the request into
-achievable steps based on the agentic tools that you have access to. For example, a common workflow is to get the CID from a compound name (search_compound), then use the CID to look up chemical properties (get_compound_info or get_compound_properties). A similar workflow exists for drug targets based on looking up the target name for its target ID (search_targets) and then using the target ID for target information (get_target_details) or disease- or drug- associations. Another common workflow is to look up SMILES from a compound name using Pubchem's search_compounds tool, then use the SMILES to compute ECFP embeddings (get_embedding). In such a case, do not use PubChem to directly compute ECFP or other fingerprint embeddings.
-"""
-
-workflow = create_supervisor(
-    [drugbank_agent, zinc_agent, util_agent, pubchem_agent, pubmed_agent, opentargets_agent],
-    model=llm,
-    prompt=supervisor_prompt,
-    output_mode="last_message",
-)
-
-# COMMAND ----------
-
-from langgraph.checkpoint.postgres import PostgresSaver
-from src.lakebase import LakebaseConnect
-
-dbClient = LakebaseConnect(
-    user = client_id,
-    password = None, # leave None to generate ephemeral token (1h)
-    instance_name = cfg.get("lakebase").get("instance_name"), 
-    database = cfg.get("lakebase").get("database"),
-    wsClient = ws_client
-)
-
-# COMMAND ----------
-
-dbClient.test_query() # connects and closes pool too
-
-# COMMAND ----------
-
-dbClient._connect()
-checkpointer = PostgresSaver(dbClient.connection_pool)
-# checkpointer.setup() # if setting up for the first time (ensure that your SP has create table permissions)
-full_agent = workflow.compile(checkpointer=checkpointer)
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Test inferencing unwrapped agent (langchain)
-
-# COMMAND ----------
-
-# Keep commented for fast mlflow logging in driver
-# Test invoking unwrapped langgraph
-# from uuid import uuid4
 
 # input_example = {
 #     "messages": [
@@ -299,44 +219,63 @@ full_agent = workflow.compile(checkpointer=checkpointer)
 #         }
 #     ]
 # }
-# thread_id = str(uuid4())
-# config = {"configurable": {"thread_id": thread_id}}
-# response = full_agent.invoke(input_example, config=config)
+# pubchem_agent.invoke(input_example)
 
 # COMMAND ----------
 
-# input_example = {
-#     "messages": [
-#         {
-#             "role": "user",
-#             "content": "What is the latest review article on danuglipron?"
-#         }
-#     ]
-# }
-# thread_id = str(uuid4())
-# config = {"configurable": {"thread_id": thread_id}}
-# response = full_agent.invoke(input_example, config=config)
+from langgraph_supervisor import create_supervisor
+
+supervisor_prompt = """You are a supervisor managing 4 agents. Route according to the agent required to fulfill the request.
+1. Drugbank agent: generates text-to-SQL queries to Drugbank of FDA-approved drugs and their properties
+2. ZINC agent: searches for drug-like molecules and their properties from the ZINC database based on ECFP4 molecular fingerprint embeddings represented as a 1024-char bitstring.
+3. Chem utilities agent: display molecule image PNG files from PubChem website by CID in markdown or compute ECFP4 molecular fingerprint embeddings in a 1024-char bitstring for a given SMILES structure. If missing SMILES input, query it from a chemical name using the PubChem MCP agent's search_compound tool.
+4. MCP agent: connects to the PubChem, PubMed and OpenTargets MCP servers
+
+Because you are an autonomous multi-agent system, do not ask for more follow up information. Instead, use chain-of-thought to reason and break down the request into
+achievable steps based on the agentic tools that you have access to. 
+"""
+
+workflow = create_supervisor(
+    [drugbank_agent, zinc_agent, util_agent, mcp_agent],
+    model=llm,
+    prompt=supervisor_prompt,
+    output_mode="last_message",
+    add_handoff_messages=False,
+    forward_messages=True,
+    parallel_tool_calls=True
+)
 
 # COMMAND ----------
 
-# Keep commented for fast mlflow logging in driver
-# import pandas as pd
+# MAGIC %md
+# MAGIC ### Test inferencing unwrapped agent (langchain)
+# MAGIC Only async works
 
-# dbClient._connect()
-# data = dbClient.query("SELECT * FROM checkpoints")
-# dbClient.close()
-# display(pd.DataFrame(data).tail())
+# COMMAND ----------
+
+# workflow.compile().invoke({"messages": [{"role": "user", "content": "Show the aspirin molecule. First get its CID from PubChem then get the molecule_png_url then display in markdown"}]})
+
+# COMMAND ----------
+
+# await workflow.compile().ainvoke({"messages": [{"role": "user", "content": "Show the aspirin molecule. First get its CID from PubChem then get the molecule_png_url then display in markdown"}]})
+
+# COMMAND ----------
+
+# async for chunk in workflow.compile().astream({"messages": [{"role": "user", "content": "Show the aspirin molecule"}]}):
+#     print(chunk, flush=True)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Add memory using Lakebase Postgres backend
+# MAGIC Use `databricks_langchain.CheckpointSaver` wrapped around `langchain.PostgresSaver` for easy authentication and connection pools.<br>
+# MAGIC Remember to make your SP used in the WorkspaceClient a superuser with CreateDB permissions
 
 # COMMAND ----------
 
 from src.responses_agent import WrappedAgent
 
-dbClient._connect()
-conninfo = dbClient.conninfo
-agent = WrappedAgent(workflow, conninfo)
-
-# COMMAND ----------
-
+agent = WrappedAgent(workflow=workflow, workspace_client=ws_client, lakebase_instance=cfg.get("lakebase").get("instance_name"))
 mlflow.models.set_model(agent)
 
 # COMMAND ----------
@@ -347,16 +286,42 @@ mlflow.models.set_model(agent)
 # COMMAND ----------
 
 # from uuid import uuid4
+# import nest_asyncio
+# nest_asyncio.apply()
 
 # thread_id = str(uuid4())
-# response1 = agent.predict({
-#     "input": [{"role": "user", "content": "Show the aspirin molecule. First get its CID from PubChem then get the molecule_png_url then display in markdown"}], 
-#     "custom_inputs": {"thread_id": thread_id, "recursion_limit": 20}
-#     })
+# inputs = {
+#     "input": [{"role": "user", "content": "What is the ENSEMBL ID of GLP-1"}], 
+#     "custom_inputs": {"thread_id": thread_id}
+# }
+# response1 = agent.predict(inputs)
+# response1
 
 # COMMAND ----------
 
-# response1 = agent.predict({
-#     "input": [{"role": "user", "content": "Summarize the latest articles on the use of aspirin in the treatment of covid"}], 
+# from uuid import uuid4
+# import nest_asyncio
+# nest_asyncio.apply()
+#
+# thread_id = str(uuid4())
+# inputs = {
+#     "input": [{"role": "user", "content": "What is the CID of danuglipron?"}], 
+#     "custom_inputs": {"thread_id": thread_id}
+# }
+# response1 = agent.predict(inputs)
+
+# COMMAND ----------
+
+# inputs = {
+#     "input": [{"role": "user", "content": "What is its molecular structure?"}], 
+#     "custom_inputs": {"thread_id": thread_id}
+# }
+# response2 = agent.predict(inputs)
+
+# COMMAND ----------
+
+# response3 = agent.predict({
+#     "input": [{"role": "user", "content": "Summarize the latest review on the safety of danuglipron"}], 
 #     "custom_inputs": {"thread_id": thread_id}
 #     })
+# response3

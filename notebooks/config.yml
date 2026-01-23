@@ -1,6 +1,7 @@
 host: https://fevm-aichemy2.cloud.databricks.com/
 catalog: aichemy2_catalog
 schema: aichemy
+#llm_endpoint: databricks-gpt-5-2
 llm_endpoint: databricks-claude-opus-4-5
 genie_space_id: 01f0eaa5825418ce88ec537abc57fd77
 genie_table: aichemy2_catalog.aichemy.drugbank_full

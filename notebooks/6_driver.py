@@ -10,6 +10,11 @@
 
 # COMMAND ----------
 
+# Test that databricks-langchain[memory] was installed
+from databricks_ai_bridge.lakebase import AsyncLakebasePool
+
+# COMMAND ----------
+
 # MAGIC %pip freeze > requirements_driver.txt 
 
 # COMMAND ----------
@@ -60,12 +65,6 @@ input = {
     "input": input_message["messages"],
     "custom_inputs": {"thread_id": str(uuid4())}
 }
-
-# COMMAND ----------
-
-# MAGIC %sh
-# MAGIC cp ../requirements.txt requirements.in
-# MAGIC pip-compile -o env.txt requirements.in
 
 # COMMAND ----------
 
@@ -136,7 +135,23 @@ input_message = {
     "messages": [
         {
             "role": "user",
-            "content": "What molecule in ZINC is most structurally similar to danuglipron? To solve this, compute ECFP4 fingerprint embedding of danuglipron (from its SMILES) as ECFP4 is what the ZINC vector store uses."
+            "content": "Get the ECFP4 fingerprint embedding of danuglipron using the get_embedding(smiles) tool in the chem_utils agent"
+        }
+    ]
+}
+input = {
+    "input": input_message["messages"],
+    "custom_inputs": {"thread_id": thread_id, "recursion_limit": 50}
+}
+loaded_model.predict(input)
+
+# COMMAND ----------
+
+input_message = {
+    "messages": [
+        {
+            "role": "user",
+            "content": "What molecule in ZINC is most structurally similar to danuglipron based on ECFP4?"
         }
     ]
 }
