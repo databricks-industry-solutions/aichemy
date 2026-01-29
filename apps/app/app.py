@@ -1,11 +1,12 @@
 import logging
 import streamlit as st
 from mlflow.deployments import get_deploy_client
-from utils import get_user_info, ask_agent_mlflowclient, extract_text_content
+from utils import get_user_info, ask_agent_mlflowclient, extract_text_content, parse_tool_calls, strip_tool_call_tags
 from uuid import uuid4
-from pprint import pprint
+from pprint import pformat
 import time
 from io import BytesIO
+import pandas as pd
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -19,19 +20,14 @@ user_info = get_user_info()
 # Page Config
 # ============================================================================
 
-st.set_page_config(
-    page_title="AiChemy",
-    page_icon="⚗️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-# st.logo("logo.svg", size="large", link=None)
+st.set_page_config(page_title="AiChemy", page_icon="⚗️", layout="wide", initial_sidebar_state="expanded")
 
 # ============================================================================
 # Custom CSS
 # ============================================================================
 
-st.markdown("""
+st.markdown(
+    """
 <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
@@ -43,17 +39,6 @@ st.markdown("""
         padding-left: 1rem; 
         padding-right: 1rem;
         max-width: 100% !important;
-    }
-    
-    .stButton > button {
-        border-radius: 20px;
-    }
-    .stButton > button[kind="primary"] {
-        background-color: #4a9d7c !important;
-        border: none !important;
-    }
-    .stButton > button[kind="primary"]:hover {
-        background-color: #3d8a6a !important;
     }
     
     /* Custom scrollbar for chat history container */
@@ -82,23 +67,45 @@ st.markdown("""
         background: #3d8a6a;
     }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # ============================================================================
 # Data
 # ============================================================================
-# TODO: retrieve from agent metadata
-AGENT_PLAN = [
-    {"name": "PubChem agent", "description": "Search for compounds matching query"},
-    {"name": "OpenTargets agent", "description": "Retrieve target evidence and associations"},
-    {"name": "Hit identification agent", "description": "Rank hits by structural similarity"},
-]
-
 EXAMPLE_QUESTIONS = [
     "Get the latest review study on the GI toxicity of danuglipron",
     "What diseases are associated with EGFR",
     "Show me compounds similar to vemurafenib. Display their structures",
     "List all the drugs in the GLP-1 agonists ATC class in DrugBank",
+]
+
+WORKFLOWS = [
+    "🧬 Target identification", 
+    "⌬ Hit identification", 
+    "🧪 Lead optimization", 
+    "☠️ Safety assessment"
+]
+
+workflow_captions = [
+    "Based on a disease, get its associated targets", 
+    "Based on a target, get its associated drugs", 
+    "Based on a compound, get its properties", 
+    "Based on a compound, get its safety info"
+]
+
+compound_info_options = [
+    "Structure: SMILES, InChI, MW...",
+    "ADME: LogP, Druglikeness, CYP3A4...",
+    "Bioactivity: IC50...",
+    "All"
+]
+
+AGENT_PLAN = [
+    {"name": "PubChem agent", "description": "Search for compounds matching query"},
+    {"name": "OpenTargets agent", "description": "Retrieve target evidence and associations"},
+    {"name": "Hit identification agent", "description": "Rank hits by structural similarity"},
 ]
 
 # TODO: mock data for agent execution. To parse from response.json()
@@ -109,6 +116,10 @@ agents = [
     ("VS agent", "clustered 50 diverse hits"),
 ]
 
+# Load tools from tab-delimited file
+df_tools = pd.read_csv("tools.txt", sep="\t")
+TOOLS = list(df_tools.itertuples(index=False, name=None))
+
 # ============================================================================
 # Session State
 # ============================================================================
@@ -118,51 +129,45 @@ if "thread_id" not in st.session_state:
     st.session_state.thread_id = str(uuid4())
 if "messages" not in st.session_state:
     st.session_state.messages = []
-if "agent_steps" not in st.session_state:
-    st.session_state.agent_steps = []
-if "state" not in st.session_state:
-    st.session_state.state = "idle"  # idle, awaiting_approval, executing, complete
-if "current_query" not in st.session_state:
-    st.session_state.current_query = None
-if "auto_approve" not in st.session_state:
-    st.session_state.auto_approve = True
-if "pending_response" not in st.session_state:
-    st.session_state.pending_response = None
-if "trigger_query" not in st.session_state:
-    st.session_state.trigger_query = None
+if "tool_calls" not in st.session_state:
+    st.session_state.tool_calls = []
+if "workflow" not in st.session_state:
+    st.session_state.workflow = None
+if "is_processing" not in st.session_state:
+    st.session_state.is_processing = False
+if "last_processed_input" not in st.session_state:
+    st.session_state.last_processed_input = None
+if "stop" not in st.session_state:
+    st.session_state.stop = False
+if "prompts_w_tools" not in st.session_state:
+    st.session_state.prompts_w_tools = []
+if "workflow_input" not in st.session_state:
+    st.session_state.workflow_input = None
 
-# Add reset button
-if st.button("🔄 Reset Chat"):
-    st.session_state.thread_id = str(uuid4())
-    st.session_state.messages = []
-    st.rerun()
+def clear_workflow():
+    st.session_state.workflow = None
+    st.session_state.workflow_input = None
 
-# ============================================================================
-# Callbacks
-# ============================================================================
 
-def on_approve():
-    st.session_state.state = "executing"
-
-def on_cancel():
-    st.session_state.state = "idle"
-    st.session_state.agent_steps = []
-    st.session_state.current_query = None
-
+def stop_processing():
+    # Handle the case where stop was requested
+    if st.session_state.stop and st.session_state.is_processing:
+        # Remove the user message we just added since we're cancelling
+        if len(st.session_state.messages) > 0 and st.session_state.messages[-1]["input"][-1]["role"] == "user":
+            st.session_state.messages.pop()
+        st.session_state.last_processed_input = None
+        st.session_state.is_processing = False
+        st.session_state.workflow = None
+        st.warning("⚠️ Query cancelled by user.")
+        
 # ============================================================================
 # Sidebar
 # ============================================================================
 
 with st.sidebar:
-    st.markdown("""
-    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 20px;">
-        <div style="width: 32px; height: 32px; background: #4a9d7c; border-radius: 8px; 
-                    display: flex; align-items: center; justify-content: center; color: white;">⚗️</div>
-        <span style="font-size: 18px; font-weight: 600;">AiChemy</span>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    st.markdown("""
+    st.logo("logo.svg", size="large", link=None)
+    st.markdown(
+        """
     <div style="background: #e6f4ef; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
                 border-left: 3px solid #4a9d7c;">
         🧬 <b>Project 1</b>
@@ -170,15 +175,44 @@ with st.sidebar:
     <div style="padding: 10px 12px; color: #666;">
         🧬 Project 2
     </div>
-    """, unsafe_allow_html=True)
-    
-    st.divider()
-    st.caption("WORKFLOWS")
-    st.markdown("🎯 Target identification")
-    st.markdown("🎯 Hit identification")
-    st.markdown("⚗️ Lead optimization")
-    st.markdown("☠️ Safety assessment")
+    """,
+        unsafe_allow_html=True,
+    )
 
+    st.divider()
+
+    # Workflow selector
+    st.markdown("**Guided workflows**")
+    st.session_state.workflow = st.radio(
+        "", WORKFLOWS, index=None, captions=workflow_captions, label_visibility="collapsed"
+    )
+
+    st.divider()
+
+    # Available tools 
+    st.markdown("**Available tools**")
+    opentargets_expander = st.expander("🎯 OpenTargets MCP", expanded=False)
+    pubchem_expander = st.expander("🧪 PubChem MCP", expanded=False)        
+    utils_expander = st.expander("🛠️ Chem Utilities", expanded=False)
+    pubmed_expander = st.expander("📚 PubMed MCP", expanded=False)
+    drugbank_expander = st.expander("💊 DrugBank Genie", expanded=False)
+    drugbank_expander.caption("text-to-SQL of DrugBank")
+    zinc_expander = st.expander("🔬 ZINC Vector Search", expanded=False)
+    zinc_expander.caption("similarity search")
+
+    for tool in TOOLS:
+        if tool[0] == "OpenTargets":
+            opentargets_expander.caption(tool[1])
+        elif tool[0] == "PubChem":
+            pubchem_expander.caption(tool[1])
+        elif tool[0] == "Chem Utils":
+            utils_expander.caption(tool[1])
+        elif tool[0] == "PubMed":
+            pubmed_expander.caption(tool[1])
+        elif tool[0] == "DrugBank":
+            drugbank_expander.caption(tool[1])
+        elif tool[0] == "ZINC":
+            zinc_expander.caption(tool[1])
 
 # ============================================================================
 # Main Layout
@@ -191,204 +225,199 @@ col_chat, col_agents = st.columns([3, 1])
 # ============================================================================
 
 with col_chat:
-    st.markdown("### Project 1")
-    st.caption("Sort and manage results")
-
-    # Chat input at the top
-    print(st.session_state.state)
-    disabled = st.session_state.state not in ["idle", "complete"]
-
     # Display chat history in a container
     chat_history_container = st.container(height=500)
     with chat_history_container:
         for msg in st.session_state.messages:
             with st.chat_message(msg["input"][-1]["role"]):
                 st.markdown(msg["input"][-1]["content"])
-    
-    # Example questions - show only when chat is empty
-    if len(st.session_state.messages) == 0:
-        st.caption("**Try these example questions:**")
-        cols = st.columns(2)
-        for idx, question in enumerate(EXAMPLE_QUESTIONS):
-            with cols[idx % 2]:
-                if st.button(question, key=f"example_{idx}", use_container_width=True):
-                    st.session_state.trigger_query = question
 
-    # Check for triggered query from example buttons or chat input
-    prompt = st.session_state.trigger_query or st.chat_input(
-        "Ask AiChemy anything about your R&D project...", 
-        key="chat_input",
-        disabled=disabled
-    )
-    
-    if prompt:
-        # Clear trigger if it was set
-        if st.session_state.trigger_query:
-            st.session_state.trigger_query = None
+    # Reset prompt and input key
+    prompt = None
+    input_key = None  # Track which input generated the prompt
+
+    # Chat input with reset button
+    input_col, reset_col = st.columns([7, 1])
+    with input_col:
+        if prompt := st.chat_input("Ask AiChemy anything...", key="chat_input", on_submit=clear_workflow):
+            input_key = f"chat:{prompt}"
+    with reset_col:
+        if st.button("Reset", key="reset", icon=":material/replay:"):
+            st.session_state.thread_id = str(uuid4())
+            st.session_state.messages = []
+            st.session_state.tool_calls = []
+            st.session_state.workflow = None
+            st.session_state.is_processing = False
+            st.session_state.last_processed_input = None            
+            st.session_state.stop = False
+            st.session_state.prompts_w_tools = [] 
+            st.rerun()
+
+    if st.session_state.workflow == WORKFLOWS[0]:
+        # Show text input for disease of interest
+        col1, col2 = st.columns([7, 1])
+        with col1:
+            if disease_input := st.text_input(
+                "Enter the disease of interest", key="workflow_input", placeholder="e.g., breast cancer, Alzheimer's disease"
+            ):
+                input_key = f"disease:{disease_input}"
+                prompt = f"Use OpenTargets to find targets associated with {st.session_state.workflow_input}. Show their scores if any and rank in descending order of scores."
+
+        with col2:# Align with input
+            st.button("Clear", key="clear_disease", icon=":material/clear:", on_click=clear_workflow)
+
+
+    elif st.session_state.workflow == WORKFLOWS[1]:
+        # Show text input for target of interest
+        col1, col2 = st.columns([7, 1])
+        with col1:
+            if target_input := st.text_input("Enter the target of interest", key="workflow_input", placeholder="e.g., BRCA1, GLP-1"):
+                input_key = f"target:{target_input}"
+                prompt = f"Use OpenTargets to find drugs associated with {st.session_state.workflow_input}. Show their scores if any and rank in descending order of scores."
+        with col2:
+            st.button("Clear", key="clear_target", icon=":material/clear:", on_click=clear_workflow)
+
+
+    elif st.session_state.workflow == WORKFLOWS[2]:
+        # Show text input for compound of interest
+        col1, col2 = st.columns([5, 1])
+        with col1:
+            if compound_input := st.text_input(
+                "Enter the compound of interest", key="workflow_input", placeholder="e.g., acetaminophen, semaglutide, CHEMBL25"
+            ):
+                input_key = f"compound:{compound_input}"
+                # Show pills for compound properties selection
+                if compound_info := st.pills(
+                    label="What do you want to know about this compound?",
+                    options=compound_info_options,
+                    selection_mode="multi",
+                ):
+                    properties_str = ", ".join(compound_info)
+                    input_key = f"{input_key}:{properties_str}"
+                    prompt = f"Use PubChem to get {properties_str} properties of {st.session_state.workflow_input}."
+        with col2:
+            st.button("Clear", key="clear_compound", icon=":material/clear:", on_click=clear_workflow)
+
+    elif st.session_state.workflow == WORKFLOWS[3]:
+        # Show text input for target of interest
+        col1, col2 = st.columns([7, 1])
+        with col1:
+            if compound_input := st.text_input("Enter the compound of interest", key="workflow_input", placeholder="e.g., BRCA1, GLP-1"):
+                input_key = f"compound:{compound_input}:safety"
+                prompt = f"Use PubChem and PubMed to find safety profile of {st.session_state.workflow_input}. If citing studies, please state the strength of the evidence based on the study design."
+        with col2:
+            st.button("Clear", key="clear_target", icon=":material/clear:", on_click=clear_workflow)
         
+    else:
+        # Example questions - show only when chat is empty
+        if len(st.session_state.messages) == 0:
+            st.caption("**Try these example questions:**")
+            selected_question = st.pills(
+                "example_pills", EXAMPLE_QUESTIONS, selection_mode="single", label_visibility="collapsed", default=None
+            )
+
+            if selected_question:
+                input_key = f"example:{selected_question}"
+                prompt = selected_question
+
+    # Only process if we have a new input (not already processed) and not stopped
+    if prompt and input_key != st.session_state.last_processed_input and not st.session_state.stop:
+        # Mark this input as processed
+        st.session_state.last_processed_input = input_key
         with st.chat_message("user"):
             st.markdown(prompt)
-        st.session_state.current_query = prompt
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        st.session_state.current_query = prompt
-        # Add query to chat history
-        st.session_state.messages.append({
-            "input": [{"role": "user", "content": prompt}],
-            "custom_inputs": {"thread_id": st.session_state.thread_id},
-#            "databricks_options": {"return_trace": True},
-        })
-        
-        with st.spinner("🤖 Thinking..."):
-            print(f"Last msg:{st.session_state.messages[-1]}")
-            # Query the agent endpoint
-            response_json = ask_agent_mlflowclient(
-                input_dict=st.session_state.messages[-1], client=client
-            )  # returns response.json()
-            # pprint(response_json)
-            text_contents = extract_text_content(response_json)
-            if len(text_contents) > 0:
-                # # Join all text contents
-                assistant_response = (
-                    "\n\n".join(text_contents) if text_contents else ""
-                )
-            else:
-                assistant_response = "No response. Retry or reset the chat."        
-            # Store assistant response to display after agent execution
-            st.session_state.pending_response = assistant_response
-            print(assistant_response)
-            
-            custom_outputs = response_json.get("custom_outputs", {})
 
-            try:
-                tool_call = response_json.get("output", [])[-1].get("name", '').replace("transfer_to_", "")
-            except Exception as e:  
-                print(e)
-                tool_call = None
-            if tool_call:
-                print(f"Tool call: {tool_call}")
-
-            st.session_state.agent_steps = [
-                {"name": "Plan created", "status": "completed", "result": "Execution plan ready"}
-            ] + [
-                {"name": agent["name"], "status": "pending", "result": agent["description"]}
-                for agent in AGENT_PLAN
-            ]
-            
-            if st.session_state.auto_approve:
-                st.session_state.state = "executing"
-            else:
-                st.session_state.state = "awaiting_approval"
-        st.rerun()
-                
-            # if msg.get("has_results"):
-            #     st.success(f"Found {len(MOLECULES)} candidates")
-                
-            #     for mol in MOLECULES:
-            #         c1, c2, c3, c4 = st.columns([2, 1, 1, 2])
-            #         with c1:
-            #             img = get_molecule_image(mol["smiles"])
-            #             if img:
-            #                 if isinstance(img, tuple) and img[0] == "svg":
-            #                     st.markdown(img[1], unsafe_allow_html=True)
-            #                 elif isinstance(img, bytes):
-            #                     st.image(img, width=120)
-            #             else:
-            #                 st.code(mol["smiles"][:20])
-            #         with c2:
-            #             st.metric("IC₅₀", f"{mol['ic50']} nM")
-            #         with c3:
-            #             st.metric("ClogP", mol["clogp"])
-            #         with c4:
-            #             st.caption(mol["notes"])
-                
-            #     suggestions = get_suggestions(msg.get("original_query", ""))
-            #     st.write("")
-            #     st.caption("**Suggested follow-ups:**")
-            #     cols = st.columns(len(suggestions))
-            #     for idx, (col, suggestion) in enumerate(zip(cols, suggestions)):
-            #         with col:
-            #             if st.button(suggestion, key=f"s_{msg.get('id', 0)}_{idx}", use_container_width=True):
-            #                 st.session_state.trigger_query = suggestion
-    
-    # Show awaiting approval state
-    if st.session_state.state == "awaiting_approval":
-        st.write("Please approve or cancel in the right panel →")
-    
-    # Execute agents
-    elif st.session_state.state == "executing":
-        # Add assistant message to chat history
-        if st.session_state.pending_response:
-            st.markdown(st.session_state.pending_response)
-            st.session_state.messages.append({
-                "input": [{"role": "assistant", "content": st.session_state.pending_response}],
+        # Append query to messages
+        st.session_state.messages.append(
+            {
+                "input": [{"role": "user", "content": prompt}],
                 "custom_inputs": {"thread_id": st.session_state.thread_id},
-                # "has_results": True,
-                # "original_query": original_query
-            })
-        st.session_state.state = "complete"
-        st.session_state.current_query = None
-        st.session_state.pending_response = None
-        st.rerun()
+                #           "databricks_options": {"return_trace": True}
+            }
+        )
+        print(f"Last msg:{pformat(st.session_state.messages[-1], width=120)}")
     
+        # Check if we need to actually make the API call
+        # (last message should be a user message without a corresponding assistant response)
+        if len(st.session_state.messages) > 0 and st.session_state.messages[-1]["input"][-1]["role"] == "user":
+            with st.status("🤖 Thinking...", expanded=True) as status:
+                st.session_state.is_processing = True
+                # Add stop button inside the status widget
+                st.button("Stop", type="primary", key="stop", icon=":material/stop_circle:", on_click=stop_processing)
+                
+                if st.session_state.is_processing and not st.session_state.stop:
+                    # Query the agent endpoint
+                    response_json = ask_agent_mlflowclient(
+                        input_dict=st.session_state.messages[-1], client=client
+                    )  # returns response.json()
+                    # Write response to file
+                    with open("response_json.txt", "w") as f:
+                        f.write(pformat(response_json, width=120))
+                    text_contents = extract_text_content(response_json)
+                    if len(text_contents) > 0:
+                        # Parse tool calls from the text content
+                        all_tool_calls = []
+                        cleaned_texts = []
+                        # agent keeps appending according to thread_id so just get the last one
+                        response_list = [text_contents[-1]]
+                        print(response_list[0])
+                        for text_content in response_list:
+                            tool_calls = parse_tool_calls(text_content)
+                            all_tool_calls.extend(tool_calls)
+                            # Strip tool call tags from the text
+                            cleaned_text = strip_tool_call_tags(text_content)
+                            if cleaned_text:  # Only add non-empty cleaned text
+                                cleaned_texts.append(cleaned_text)
+                        if len(all_tool_calls) > 0:
+                            st.session_state.tool_calls.append(all_tool_calls)
+                            st.session_state.prompts_w_tools.append(prompt)
+                        # Join cleaned text contents
+                        assistant_response = "\n\n".join(cleaned_texts) if cleaned_texts else ""
+                    else:
+                        assistant_response = "No response. Retry or reset the chat."
+                    # print(assistant_response)
+                    # Append answer to messages
+                    st.session_state.messages.append(
+                        {
+                            "input": [{"role": "assistant", "content": assistant_response}],
+                            "custom_inputs": {"thread_id": st.session_state.thread_id},
+                            # "has_results": True,
+                            # "original_query": original_query
+                        }
+                    )
+                    
+                    status.update(label="✅ Complete!", state="complete", expanded=False)
+
+            st.session_state.is_processing = False
+            st.session_state.workflow = None
+            st.rerun()
+
 # ============================================================================
 # Agent Activity Column
 # ============================================================================
 
 with col_agents:
-    st.markdown("#### Agent Plan")
-    # Auto-approve checkbox
-    st.session_state.auto_approve = st.checkbox("Auto-approve", value=st.session_state.auto_approve)
+    st.markdown("#### Agent Activity")
     st.divider()
-    
-    if st.session_state.agent_steps:
-        for step in st.session_state.agent_steps:
-            status = step["status"]
-            if status == "completed":
-                st.markdown(f"✅ **{step['name']}**")
-            elif status == "running":
-                st.markdown(f"🔄 **{step['name']}**")
-            else:
-                st.markdown(f"⏳ **{step['name']}**")
-            
-            if step.get("result"):
-                st.caption(step["result"])
 
-        st.divider()
+    # Display tool calls in expanders
+    if st.session_state.tool_calls:
+        reversed_prompts = list(reversed(st.session_state.prompts_w_tools))
+        for j, tool_group in enumerate(reversed(st.session_state.tool_calls)):
+            st.markdown(f"**Tools calls:** {reversed_prompts[j][:80]}...")
+            for idx, tool_call in enumerate(tool_group):
+                # Create badge for function name
+                st.badge(f"{idx+1}. 🔧{tool_call['function_name']}", color="green")
 
-        # Approve/Cancel - only when awaiting
-        if st.session_state.state == "awaiting_approval":
-            st.info(f"📋 **Plan created for:** {st.session_state.current_query}")
-            st.write("The following agents will be executed:")
-            # TODO: parse plan from response.json()
-            for agent in AGENT_PLAN:
-                st.write(f"• **{agent['name']}** - {agent['description']}")
-            st.write("Please approve or cancel in the right panel →")
-            c1, c2 = st.columns(2)
-            with c1:
-                st.button("✓ Approve", type="primary", use_container_width=True, on_click=on_approve)
-            with c2:
-                st.button("✗ Cancel", use_container_width=True, on_click=on_cancel)
+                with st.expander("View details", expanded=False):
+                    # Display parameters as captions
+                    if tool_call["parameters"]:
+                        for param_name, param_value in tool_call["parameters"].items():
+                            st.caption(f"**{param_name}:** {param_value}")
 
-        elif st.session_state.state == "executing":
-            progress_placeholder = st.empty()
-            
-            steps = []
-            for name, result in agents:
-                steps.append({"name": name, "status": "running", "result": None})
-                st.session_state.agent_steps = steps.copy()
-                progress_placeholder.write(f"🔄 Running **{name}**...")
-#                time.sleep(0.6)  # Allow user to see the progress
-                
-                steps[-1]["status"] = "completed"
-                steps[-1]["result"] = result
-                st.session_state.agent_steps = steps.copy()
-                progress_placeholder.write(f"✅ **{name}**: {result}")
-
-        elif st.session_state.state == "complete":
-            completed = sum(1 for s in st.session_state.agent_steps if s["status"] == "completed")
-            st.success(f"{completed} agents completed")
+                    # Display thinking
+                    if tool_call["thinking"]:
+                        st.info(tool_call["thinking"])
+            st.divider()
     else:
-        st.info("🤖 Enter a query to create a plan")
-
-
+        st.info("🤖 Enter a query to see agent activity")

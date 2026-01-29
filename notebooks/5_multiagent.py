@@ -79,6 +79,17 @@ util_agent = create_agent(
 # COMMAND ----------
 
 # MAGIC %md
+# MAGIC ## Collect tools to display in Apps
+
+# COMMAND ----------
+
+tools = []
+tools.extend(('Chem Utils', i.name.split("__")[-1], i.description) for i in python_tools)
+[i for i in tools]
+
+# COMMAND ----------
+
+# MAGIC %md
 # MAGIC ## Create text-to-SQL Genie agent to chat with Drugbank
 
 # COMMAND ----------
@@ -89,6 +100,11 @@ from databricks_langchain.genie import GenieAgent
 # https://workspace_host/genie/rooms/<genie_id>/chats/...
 genie_space_id = cfg.get("genie_space_id")
 drugbank_agent = GenieAgent(genie_space_id, genie_agent_name="drugbank")
+
+# COMMAND ----------
+
+# tools.append(('DrugBank', drugbank_agent.name, drugbank_agent.description))
+# tools
 
 # COMMAND ----------
 
@@ -106,6 +122,8 @@ from langchain.tools import tool
 embedding_model = DatabricksEmbeddings(
     endpoint="databricks-bge-large-en",
 )
+zinc_description = "Search for chemicals in ZINC using molecular fingerprints"
+
 retriever_tool = VectorSearchRetrieverTool(
     index_name=cfg.get("retriever")["vs_index"],
     num_results=cfg.get("retriever")["k"],
@@ -118,7 +136,7 @@ retriever_tool = VectorSearchRetrieverTool(
     ],
     text_column = "smiles",
     tool_name=cfg.get("retriever")["tool_name"],
-    tool_description="Search for chemicals in ZINC using molecular fingerprints",
+    tool_description=zinc_description,
     embedding = embedding_model
 )
 @tool
@@ -136,6 +154,11 @@ retriever_prompt = "Search for drug-like chemicals in the ZINC database based on
 zinc_agent = create_agent(
     llm, tools=[tool_vectorinput], system_prompt=retriever_prompt, name="zinc"
 )
+
+# COMMAND ----------
+
+# tools.append(("ZINC", zinc_description))
+# tools
 
 # COMMAND ----------
 
@@ -195,6 +218,20 @@ Most PubChem tools (e.g. get_compound_info) except for search_compounds expect a
 mcp_agent = create_agent(
     llm, tools=mcp_tools, system_prompt=mcp_prompt, name="mcp"
 )
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Write tools.txt for the App
+
+# COMMAND ----------
+
+import pandas as pd
+
+# mcp_tools_list = await mcp_client.get_tools()
+names = ["PubChem"] * 29 + ["PubMed"] * 12 + ["OpenTargets"] * 5
+tools.extend([(i, j.name, j.description.split("\n")[0]) for i,j in zip(names, mcp_tools_list)])
+pd.DataFrame(tools, columns=["Agent", "Tool", "Description"]).to_csv("../apps/app/tools.txt", sep="\t", index=False)
 
 # COMMAND ----------
 

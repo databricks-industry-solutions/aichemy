@@ -118,8 +118,8 @@ with mlflow.start_run():
 
 # COMMAND ----------
 
-model_uri = f"runs:/{logged_agent_info.run_id}/{artifact_path}"
-# model_uri = 'runs:/34ad59c51fc746d08e6c08abb38b8b4e/agent' #v5
+# model_uri = f"runs:/{logged_agent_info.run_id}/{artifact_path}"
+model_uri = 'runs:/b7df8facc77e4432b6028f46ca0f3fb8/agent' #v11
 model_uri
 
 # COMMAND ----------
@@ -135,7 +135,24 @@ input_message = {
     "messages": [
         {
             "role": "user",
-            "content": "Get the ECFP4 fingerprint embedding of danuglipron using the get_embedding(smiles) tool in the chem_utils agent"
+            "content": "Show me compounds similar to vemurafenib. Display their structures"
+        }
+    ]
+}
+input = {
+    "input": input_message["messages"],
+    "custom_inputs": {"thread_id": thread_id, "recursion_limit": 50}
+}
+response = loaded_model.predict(input)
+
+# COMMAND ----------
+
+thread_id = str(uuid4())
+input_message = {
+    "messages": [
+        {
+            "role": "user",
+            "content": "Get the ECFP4 fingerprint embedding of danuglipron as a bitstring using the get_embedding(smiles) tool in the chem_utils agent"
         }
     ]
 }
