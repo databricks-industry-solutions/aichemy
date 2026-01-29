@@ -1,451 +1,423 @@
-import re
 import logging
-from databricks.sdk import WorkspaceClient
-import pandas as pd
-import numpy as np
-from typing import Union
-
-import sys
-import distro
-import pubchempy as pcp
-
 import streamlit as st
-from streamlit.components.v1 import html
-from utils import *
-from genie import GenieWrapper, GenieResponse
+from mlflow.deployments import get_deploy_client
+from utils import get_user_info, ask_agent_mlflowclient, extract_text_content, parse_tool_calls, strip_tool_call_tags
+from uuid import uuid4
+from pprint import pformat
+import time
+from io import BytesIO
+import pandas as pd
 
-logging.basicConfig(level=logging.ERROR)
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-print(sys.version)  # 3.11
-print(distro.info())  # Ubuntu 22.04 jammy
+# w = WorkspaceClient()
+client = get_deploy_client("databricks")
+user_info = get_user_info()
 
-# Get current working directory
-# sys.path.append(os.getcwd() + "/streamlit")
-print(f"Current Working Directory: {os.getcwd()}")
+# ============================================================================
+# Page Config
+# ============================================================================
 
-# Load configuration
-config = load_config("config.yaml")
+st.set_page_config(page_title="AiChemy", page_icon="⚗️", layout="wide", initial_sidebar_state="expanded")
 
-# Configuration variables from YAML
-if config:
-    try:
-        vs_config = config["vector_search"]
-        genie_config = config["genie"]
-    except KeyError as e:
-        st.error(f"Missing configuration section: {e}")
+# ============================================================================
+# Custom CSS
+# ============================================================================
 
-# Initialize variables
-filters_str = None
-active_cids = None
-active_pandas = None
-vs_output = None
-first_smile = None
-cpds = None
-min_similarity = 0.0
+st.markdown(
+    """
+<style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .stApp { background-color: #f5f5f5; }
+    [data-testid="stSidebar"] { background-color: white; }
+    .block-container { 
+        padding-top: 2rem !important; 
+        padding-left: 1rem; 
+        padding-right: 1rem;
+        max-width: 100% !important;
+    }
+    
+    /* Custom scrollbar for chat history container */
+    [data-testid="stVerticalBlock"] > div:has(> div > div[data-testid="stChatMessage"]) {
+        overflow-y: auto !important;
+        scrollbar-width: thin;
+        scrollbar-color: #4a9d7c #f0f0f0;
+    }
+    
+    /* Webkit browsers (Chrome, Safari, Edge) */
+    [data-testid="stVerticalBlock"] > div:has(> div > div[data-testid="stChatMessage"])::-webkit-scrollbar {
+        width: 8px;
+    }
+    
+    [data-testid="stVerticalBlock"] > div:has(> div > div[data-testid="stChatMessage"])::-webkit-scrollbar-track {
+        background: #f0f0f0;
+        border-radius: 4px;
+    }
+    
+    [data-testid="stVerticalBlock"] > div:has(> div > div[data-testid="stChatMessage"])::-webkit-scrollbar-thumb {
+        background: #4a9d7c;
+        border-radius: 4px;
+    }
+    
+    [data-testid="stVerticalBlock"] > div:has(> div > div[data-testid="stChatMessage"])::-webkit-scrollbar-thumb:hover {
+        background: #3d8a6a;
+    }
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
-# try:
-#     # no apt, dpkg, conda, cmake
-#     # subprocess.run(["tar", "xvf", "data.tar"], check=True)
-#     # result = subprocess.run(["dpkg -i "], shell=True, check=True)
-#     print(result.stdout)
-#     subprocess.run('ls -al "$LD_LIBRARY_PATH/x86_64-linux-gnu"', check=True, shell=True)
-# except subprocess.CalledProcessError as e:
-#     print(f"Error installing libxrender1: {e}")
+# ============================================================================
+# Data
+# ============================================================================
+EXAMPLE_QUESTIONS = [
+    "Get the latest review study on the GI toxicity of danuglipron",
+    "What diseases are associated with EGFR",
+    "Show me compounds similar to vemurafenib. Display their structures",
+    "List all the drugs in the GLP-1 agonists ATC class in DrugBank",
+]
 
-# Initialize Databricks SDK client
-workspace_client = get_databricks_client()
+WORKFLOWS = [
+    "🧬 Target identification", 
+    "⌬ Hit identification", 
+    "🧪 Lead optimization", 
+    "☠️ Safety assessment"
+]
 
-# Initialize session state for conversation management
-if "conversation_id" not in st.session_state:
-    st.session_state.conversation_id = None
-if "genie_search_clicked" not in st.session_state:
-    st.session_state.genie_search_clicked = False
-if "previous_geniespace" not in st.session_state:
-    st.session_state.previous_geniespace = None
+workflow_captions = [
+    "Based on a disease, get its associated targets", 
+    "Based on a target, get its associated drugs", 
+    "Based on a compound, get its properties", 
+    "Based on a compound, get its safety info"
+]
+
+compound_info_options = [
+    "Structure: SMILES, InChI, MW...",
+    "ADME: LogP, Druglikeness, CYP3A4...",
+    "Bioactivity: IC50...",
+    "All"
+]
+
+AGENT_PLAN = [
+    {"name": "PubChem agent", "description": "Search for compounds matching query"},
+    {"name": "OpenTargets agent", "description": "Retrieve target evidence and associations"},
+    {"name": "Hit identification agent", "description": "Rank hits by structural similarity"},
+]
+
+# TODO: mock data for agent execution. To parse from response.json()
+agents = [
+    ("Plan created", "Execution plan ready"),
+    ("PubChem agent", "2,143 candidates found"),
+    ("OpenTargets agent", "target evidence retrieved"),
+    ("VS agent", "clustered 50 diverse hits"),
+]
+
+# Load tools from tab-delimited file
+df_tools = pd.read_csv("tools.txt", sep="\t")
+TOOLS = list(df_tools.itertuples(index=False, name=None))
+
+# ============================================================================
+# Session State
+# ============================================================================
+if "user_id" not in st.session_state:
+    st.session_state.user_id = user_info.get("user_id")
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = str(uuid4())
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "tool_calls" not in st.session_state:
+    st.session_state.tool_calls = []
+if "workflow" not in st.session_state:
+    st.session_state.workflow = None
+if "is_processing" not in st.session_state:
+    st.session_state.is_processing = False
+if "last_processed_input" not in st.session_state:
+    st.session_state.last_processed_input = None
+if "stop" not in st.session_state:
+    st.session_state.stop = False
+if "prompts_w_tools" not in st.session_state:
+    st.session_state.prompts_w_tools = []
+if "workflow_input" not in st.session_state:
+    st.session_state.workflow_input = None
+
+def clear_workflow():
+    st.session_state.workflow = None
+    st.session_state.workflow_input = None
 
 
-def create_search_box():
-    """Create a search box that can be refreshed"""
-    search_container = st.empty()
-    search_query = search_container.text_input(
-        label="genie_input",
-        key="genie_input",
-        placeholder="Ask me about your drugs library",
-        label_visibility="collapsed",
+def stop_processing():
+    # Handle the case where stop was requested
+    if st.session_state.stop and st.session_state.is_processing:
+        # Remove the user message we just added since we're cancelling
+        if len(st.session_state.messages) > 0 and st.session_state.messages[-1]["input"][-1]["role"] == "user":
+            st.session_state.messages.pop()
+        st.session_state.last_processed_input = None
+        st.session_state.is_processing = False
+        st.session_state.workflow = None
+        st.warning("⚠️ Query cancelled by user.")
+        
+# ============================================================================
+# Sidebar
+# ============================================================================
+
+with st.sidebar:
+    st.logo("logo.svg", size="large", link=None)
+    st.markdown(
+        """
+    <div style="background: #e6f4ef; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
+                border-left: 3px solid #4a9d7c;">
+        🧬 <b>Project 1</b>
+    </div>
+    <div style="padding: 10px 12px; color: #666;">
+        🧬 Project 2
+    </div>
+    """,
+        unsafe_allow_html=True,
     )
-    return search_query
 
+    st.divider()
 
-def display_pubchem_pandas(cpds: pd.DataFrame):
-    try:
-        st.dataframe(
-            cpds,
-            hide_index=True,
-            row_height=100,
-            use_container_width=True,
-            column_config={
-                "structure": st.column_config.ImageColumn("Structure", width="medium"),
-                "url": st.column_config.LinkColumn(
-                    "CID",
-                    validate=r"^https://pubchem.ncbi.nlm.nih.gov/compound/\d+$",
-                    pinned=True,
-                    max_chars=10,
-                    display_text=r"https://pubchem.ncbi.nlm.nih.gov/compound/(\d+)",
-                ),
-            },
-        )
-    except Exception as e:
-        st.error(f"Error displaying dataframe from PubChem: {e}")
+    # Workflow selector
+    st.markdown("**Guided workflows**")
+    st.session_state.workflow = st.radio(
+        "", WORKFLOWS, index=None, captions=workflow_captions, label_visibility="collapsed"
+    )
 
+    st.divider()
 
-def display_genie_result(result: GenieResponse):
-    ans_col, sql_col = st.columns([4, 1])
-    try:
-        with ans_col:
-            st.write(result.description)
-        with sql_col:
-            with st.popover(
-                label=r"$\textsf{\scriptsize Show SQL}$",
-                help="Show SQL query generated by Genie",
-                # icon=":material/code:",
-                use_container_width=True,
-            ):
-                st.markdown(result.query)
-        st.markdown(result.result)
-    except Exception as e:
-        st.error(f"Error displaying Genie result: {e}")
+    # Available tools 
+    st.markdown("**Available tools**")
+    opentargets_expander = st.expander("🎯 OpenTargets MCP", expanded=False)
+    pubchem_expander = st.expander("🧪 PubChem MCP", expanded=False)        
+    utils_expander = st.expander("🛠️ Chem Utilities", expanded=False)
+    pubmed_expander = st.expander("📚 PubMed MCP", expanded=False)
+    drugbank_expander = st.expander("💊 DrugBank Genie", expanded=False)
+    drugbank_expander.caption("text-to-SQL of DrugBank")
+    zinc_expander = st.expander("🔬 ZINC Vector Search", expanded=False)
+    zinc_expander.caption("similarity search")
 
+    for tool in TOOLS:
+        if tool[0] == "OpenTargets":
+            opentargets_expander.caption(tool[1])
+        elif tool[0] == "PubChem":
+            pubchem_expander.caption(tool[1])
+        elif tool[0] == "Chem Utils":
+            utils_expander.caption(tool[1])
+        elif tool[0] == "PubMed":
+            pubmed_expander.caption(tool[1])
+        elif tool[0] == "DrugBank":
+            drugbank_expander.caption(tool[1])
+        elif tool[0] == "ZINC":
+            zinc_expander.caption(tool[1])
 
-def handle_genie_search(genie_config: dict):
-    """Handle genie search functionality"""
-    if st.session_state.genie_search_clicked and genie_input:
-        try:
-            # Show loading indicator
-            with st.spinner(f"🔍 Querying {genie_config['name']}..."):
-                # Initialize genie instance if not exists
-                genie = GenieWrapper(genie_config["space_id"])
+# ============================================================================
+# Main Layout
+# ============================================================================
 
-                # If no conversation exists, start a new one
-                if st.session_state.conversation_id is None:
-                    genie_response = genie.ask_first_question(genie_input)
-                    result = genie.poll_result(genie_response)
-                    if isinstance(result, GenieResponse):
-                        st.session_state.conversation_id = genie.get_conversation_id(
-                            genie_response
-                        )
-                    display_genie_result(result)
-                    # reset the click flag
-                    st.session_state.genie_search_clicked = False
-                else:
-                    # Ask follow-up question in existing conversation
-                    followup_response = genie.ask_followup_question(
-                        genie_input, st.session_state.conversation_id
-                    )
-                    followup_result = genie.poll_result(followup_response)
-                    display_genie_result(followup_result)
-                    # reset the click flag
-                    st.session_state.genie_search_clicked = False
+col_chat, col_agents = st.columns([3, 1])
 
-        except Exception as e:
-            st.error(f"❌ Genie error: {e}")
+# ============================================================================
+# Chat Column
+# ============================================================================
 
-        # Reset the click flag
-        st.session_state.genie_search_clicked = False
+with col_chat:
+    # Display chat history in a container
+    chat_history_container = st.container(height=500)
+    with chat_history_container:
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["input"][-1]["role"]):
+                st.markdown(msg["input"][-1]["content"])
 
+    # Reset prompt and input key
+    prompt = None
+    input_key = None  # Track which input generated the prompt
 
-def run_vector_search(
-    smiles: str,
-    vs_config: dict,
-    score_threshold: float = 0.0,
-    num_results: int = 3,
-    filters_json: str = None,
-) -> Union[pd.DataFrame, str]:
-
-    index_name = vs_config.get("index")
-    col_display = vs_config.get("col_display")
-    col_simscore = vs_config.get("col_simscore")
-
-    prompt_vector = smiles2vector(smiles)
-    if prompt_vector is None:
-        return "Failed to generate embeddings for the prompt."
-
-    try:
-        query_result = workspace_client.vector_search_indexes.query_index(
-            index_name=index_name,
-            columns=col_display,
-            query_vector=prompt_vector,
-            #            query_type="HYBRID",
-            num_results=num_results,
-            score_threshold=score_threshold,
-            filters_json=filters_json,
-        )
-        return pd.DataFrame(
-            query_result.result.data_array, columns=col_display + col_simscore
-        )
-    except Exception as e:
-        error_msg = f"Error finding {num_results} similars of {smiles} within {score_threshold} similarity and with filters {filters_json}. {e}"
-        logging.error(error_msg)
-        return error_msg
-
-
-st.set_page_config(page_title="ChemSearch", layout="wide")
-st.logo("logo.svg", size="large", link=None)
-
-# Row 1: SMILES input and similarity slider
-col1, col2 = st.columns([1, 1], border=True)
-
-
-with col1:
-    title_col, geniespace_col, blank_col = st.columns([1, 2, 2])
-    with title_col:
-        st.markdown("##### Ask about")
-    with geniespace_col:  # Add some spacing to align with input
-        geniespace = st.selectbox(
-            label="",
-            options=[genie_config["drugbank"]["name"], genie_config["zinc"]["name"]],
-            label_visibility="collapsed",
-            help="Select database to chat with",
-            key="geniespace_selectbox",
-        )
-
-        # Check if geniespace changed
-        geniespace_changed = (
-            st.session_state.previous_geniespace is not None
-            and st.session_state.previous_geniespace != geniespace
-        )
-
-        # Update previous geniespace
-        st.session_state.previous_geniespace = geniespace
-
-    resetbutton_col, genie_col, geniebutton_col = st.columns([1, 8, 1])
-    with resetbutton_col:
-        reset_button = st.button(
-            label="",
-            icon=":material/delete_history:",
-            help="Start a new chat",
-            use_container_width=True,
-            key="reset_button",
-        )
-        if reset_button or geniespace_changed:
-            st.session_state.conversation_id = None
+    # Chat input with reset button
+    input_col, reset_col = st.columns([7, 1])
+    with input_col:
+        if prompt := st.chat_input("Ask AiChemy anything...", key="chat_input", on_submit=clear_workflow):
+            input_key = f"chat:{prompt}"
+    with reset_col:
+        if st.button("Reset", key="reset", icon=":material/replay:"):
+            st.session_state.thread_id = str(uuid4())
+            st.session_state.messages = []
+            st.session_state.tool_calls = []
+            st.session_state.workflow = None
+            st.session_state.is_processing = False
+            st.session_state.last_processed_input = None            
+            st.session_state.stop = False
+            st.session_state.prompts_w_tools = [] 
             st.rerun()
 
-    with genie_col:
-        genie_input = create_search_box()
+    if st.session_state.workflow == WORKFLOWS[0]:
+        # Show text input for disease of interest
+        col1, col2 = st.columns([7, 1])
+        with col1:
+            if disease_input := st.text_input(
+                "Enter the disease of interest", key="workflow_input", placeholder="e.g., breast cancer, Alzheimer's disease"
+            ):
+                input_key = f"disease:{disease_input}"
+                prompt = f"Use OpenTargets to find targets associated with {st.session_state.workflow_input}. Show their scores if any and rank in descending order of scores."
 
-    with geniebutton_col:
-        geniesearch_button = st.button(
-            label="", type="primary", icon=":material/search:", key="geniesearch_button"
-        )
-        if geniesearch_button:
-            st.session_state.genie_search_clicked = True
+        with col2:# Align with input
+            st.button("Clear", key="clear_disease", icon=":material/clear:", on_click=clear_workflow)
 
-    st.text("Examples: What is ozempic and its molecular weight?\nList drugs with an azo group and their indications.")
 
-    # Handle genie search
-    genie_config_selected = genie_name_to_config(geniespace, genie_config)
-    handle_genie_search(genie_config_selected)
+    elif st.session_state.workflow == WORKFLOWS[1]:
+        # Show text input for target of interest
+        col1, col2 = st.columns([7, 1])
+        with col1:
+            if target_input := st.text_input("Enter the target of interest", key="workflow_input", placeholder="e.g., BRCA1, GLP-1"):
+                input_key = f"target:{target_input}"
+                prompt = f"Use OpenTargets to find drugs associated with {st.session_state.workflow_input}. Show their scores if any and rank in descending order of scores."
+        with col2:
+            st.button("Clear", key="clear_target", icon=":material/clear:", on_click=clear_workflow)
 
-with col2:
-    st.markdown("##### Search PubChem")
-    (
-        input_col,
-        button_col,
-        sketch_col,
-        searchtype_col,
-    ) = st.columns([3, 1, 3, 3])
 
-    with input_col:
-        query_input = st.text_input(
-            label="input",
-            placeholder="Enter SMILES, name or CID",
-            label_visibility="collapsed",
-        )
-    with sketch_col:
-        sketch_button = st.button(
-            label="Sketch to SMILES",
-            icon=":material/edit:",
-            use_container_width=True,
-        )
-        if sketch_button:
-            html(
-                '<script>window.open("https://pubchem.ncbi.nlm.nih.gov//edit3/index.html", "_blank", "height=580,width=1150");</script>'
+    elif st.session_state.workflow == WORKFLOWS[2]:
+        # Show text input for compound of interest
+        col1, col2 = st.columns([5, 1])
+        with col1:
+            if compound_input := st.text_input(
+                "Enter the compound of interest", key="workflow_input", placeholder="e.g., acetaminophen, semaglutide, CHEMBL25"
+            ):
+                input_key = f"compound:{compound_input}"
+                # Show pills for compound properties selection
+                if compound_info := st.pills(
+                    label="What do you want to know about this compound?",
+                    options=compound_info_options,
+                    selection_mode="multi",
+                ):
+                    properties_str = ", ".join(compound_info)
+                    input_key = f"{input_key}:{properties_str}"
+                    prompt = f"Use PubChem to get {properties_str} properties of {st.session_state.workflow_input}."
+        with col2:
+            st.button("Clear", key="clear_compound", icon=":material/clear:", on_click=clear_workflow)
+
+    elif st.session_state.workflow == WORKFLOWS[3]:
+        # Show text input for target of interest
+        col1, col2 = st.columns([7, 1])
+        with col1:
+            if compound_input := st.text_input("Enter the compound of interest", key="workflow_input", placeholder="e.g., BRCA1, GLP-1"):
+                input_key = f"compound:{compound_input}:safety"
+                prompt = f"Use PubChem and PubMed to find safety profile of {st.session_state.workflow_input}. If citing studies, please state the strength of the evidence based on the study design."
+        with col2:
+            st.button("Clear", key="clear_target", icon=":material/clear:", on_click=clear_workflow)
+        
+    else:
+        # Example questions - show only when chat is empty
+        if len(st.session_state.messages) == 0:
+            st.caption("**Try these example questions:**")
+            selected_question = st.pills(
+                "example_pills", EXAMPLE_QUESTIONS, selection_mode="single", label_visibility="collapsed", default=None
             )
-    with button_col:  # Add some spacing to align with input
-        search_button = st.button(
-            label="", type="primary", icon=":material/search:", key="search_button"
+
+            if selected_question:
+                input_key = f"example:{selected_question}"
+                prompt = selected_question
+
+    # Only process if we have a new input (not already processed) and not stopped
+    if prompt and input_key != st.session_state.last_processed_input and not st.session_state.stop:
+        # Mark this input as processed
+        st.session_state.last_processed_input = input_key
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Append query to messages
+        st.session_state.messages.append(
+            {
+                "input": [{"role": "user", "content": prompt}],
+                "custom_inputs": {"thread_id": st.session_state.thread_id},
+                #           "databricks_options": {"return_trace": True}
+            }
         )
-    with searchtype_col:  # Add some spacing to align with input
-        searchtype = st.selectbox(
-            label="",
-            placeholder="Search type",
-            options=["exact", "similarity", "substructure", "superstructure"],
-            label_visibility="collapsed",
-            help="[Learn about search types](https://pubchem.ncbi.nlm.nih.gov/search/help_search.html#SbSp)",
-        )
-        top_k = st.number_input(
-            "Number of hits",
-            min_value=1,
-            max_value=None,
-            value=3,
-            step=1,
-            help="Show this number of most similar molecules",
-        )
-        # min_similarity = st.number_input(
-        #     "Minimum similarity",
-        #     min_value=0.0,
-        #     max_value=1.0,
-        #     value=0.03,
-        #     step=0.01,
-        #     help="Show molecules with similarity score above this threshold",
-        # )
-        # mw_range = st.slider(
-        #     "Molecular weight",
-        #     min_value=0,
-        #     max_value=5000,
-        #     value=(200, 1000),
-        #     step=10,
-        #     help="Show compounds with molecular weight within this range",
-        # )
-        # mw_low, mw_upp = mw_range
-        # filters_str = f"""{{"mwt >": {str(mw_low)},
-        #             "mwt <=": {str(mw_upp)}}}"""
-
-    # Pubchem search
-    if search_button and query_input:
-        with st.spinner("🔍 Searching ..."):
-            input_list = multi_inputs_to_list(query_input)
-            first_input = input_list[0]
-            if len(input_list) > 1:
-                st.info("Multiple inputs detected. Only the first one will be used.")
-
-            try:
-                # It looks like the code `cpds` is not a valid Python code snippet. It seems to be a
-                # placeholder or a typo.
-                cpds = universal_search(
-                    first_input, searchtype=searchtype, max_records=top_k
-                )
-                if isinstance(cpds, pcp.Compound):
-                    first_smile, name, url, description = get_pubchem_info(cpds)
-                    pubchem_properties = get_pubchem_properties(cpds)
-                    if isinstance(pubchem_properties, pd.DataFrame):
-                        active_cids = pubchem_properties.loc[
-                            "has_similar_bioactivity", "Value"
-                        ]
-                        if len(active_cids) > 0:
-                            active_pandas = cids_to_pandas(active_cids)
-                elif isinstance(cpds, pd.DataFrame):
-                    first_smile = first_input
-                    name, url, description, pubchem_properties = None, None, None, None
-                    pass
-
-            except Exception as e:
-                st.error(
-                    f"Error looking up {first_input} in PubChem. Try using SMILES or CID instead. {e}"
-                )
-
-            # Similarity search in ZINC
-            if first_smile:
-                vs_output = run_vector_search(
-                    first_smile,
-                    vs_config["zinc"],
-                    score_threshold=min_similarity,
-                    num_results=top_k,
-                    filters_json=filters_str,
-                )
-
-                img = smiles2svg(first_smile)
-                # If using mol2grid
-                # Display seed molecule
-                # html_output = display_mol(query_input)
-                # st.components.v1.html(html_output, height=10000)
-
-                # If using MolsToGridImage
-                # Put smile and name in a list
-                # smiles_list = [first_smile]
-                # name_list = [name]
-                # img = mol2svg(smiles_list, name_list)
-
-                # Create two columns for image and properties
-                props_col, img_col = st.columns([7, 3])
-
-                with props_col:
-                    if isinstance(pubchem_properties, pd.DataFrame):
-                        st.dataframe(
-                            pubchem_properties,
-                            use_container_width=True,
-                            height=350,
-                            # TODO: does not work for a row in a pd series-like df
-                            column_config={
-                                "bioassay": st.column_config.LinkColumn(
-                                    validate=r"^https://pubchem.ncbi.nlm.nih.gov/bioassay/\d+$",
-                                    max_chars=10,
-                                    display_text=r"https://pubchem.ncbi.nlm.nih.gov/bioassay/(\d+)",
-                                ),
-                            },
-                        )
-
-                with img_col:
-                    if img.startswith("<"):
-                        st.image(img, width=200, use_container_width=False)
-                        if name:
-                            st.markdown(
-                                f"""**{name}**<br>
-                                [PubChem URL]({url})""",
-                                unsafe_allow_html=True,
-                                help=description,
-                            )
+        print(f"Last msg:{pformat(st.session_state.messages[-1], width=120)}")
+    
+        # Check if we need to actually make the API call
+        # (last message should be a user message without a corresponding assistant response)
+        if len(st.session_state.messages) > 0 and st.session_state.messages[-1]["input"][-1]["role"] == "user":
+            with st.status("🤖 Thinking...", expanded=True) as status:
+                st.session_state.is_processing = True
+                # Add stop button inside the status widget
+                st.button("Stop", type="primary", key="stop", icon=":material/stop_circle:", on_click=stop_processing)
+                
+                if st.session_state.is_processing and not st.session_state.stop:
+                    # Query the agent endpoint
+                    response_json = ask_agent_mlflowclient(
+                        input_dict=st.session_state.messages[-1], client=client
+                    )  # returns response.json()
+                    # Write response to file
+                    with open("response_json.txt", "w") as f:
+                        f.write(pformat(response_json, width=120))
+                    text_contents = extract_text_content(response_json)
+                    if len(text_contents) > 0:
+                        # Parse tool calls from the text content
+                        all_tool_calls = []
+                        cleaned_texts = []
+                        # agent keeps appending according to thread_id so just get the last one
+                        response_list = [text_contents[-1]]
+                        print(response_list[0])
+                        for text_content in response_list:
+                            tool_calls = parse_tool_calls(text_content)
+                            all_tool_calls.extend(tool_calls)
+                            # Strip tool call tags from the text
+                            cleaned_text = strip_tool_call_tags(text_content)
+                            if cleaned_text:  # Only add non-empty cleaned text
+                                cleaned_texts.append(cleaned_text)
+                        if len(all_tool_calls) > 0:
+                            st.session_state.tool_calls.append(all_tool_calls)
+                            st.session_state.prompts_w_tools.append(prompt)
+                        # Join cleaned text contents
+                        assistant_response = "\n\n".join(cleaned_texts) if cleaned_texts else ""
                     else:
-                        st.error(f"Error displaying molecules. {img}")
+                        assistant_response = "No response. Retry or reset the chat."
+                    # print(assistant_response)
+                    # Append answer to messages
+                    st.session_state.messages.append(
+                        {
+                            "input": [{"role": "assistant", "content": assistant_response}],
+                            "custom_inputs": {"thread_id": st.session_state.thread_id},
+                            # "has_results": True,
+                            # "original_query": original_query
+                        }
+                    )
+                    
+                    status.update(label="✅ Complete!", state="complete", expanded=False)
 
+            st.session_state.is_processing = False
+            st.session_state.workflow = None
+            st.rerun()
 
-if cpds is not None:
-    if isinstance(active_pandas, pd.DataFrame):
-        st.markdown(
-            "##### Similar bioactivity in PubChem",
-            help="Compounds active in the same human bioassay",
-        )
-        display_pubchem_pandas(active_pandas)
+# ============================================================================
+# Agent Activity Column
+# ============================================================================
 
-    if isinstance(cpds, pd.DataFrame):
-        st.markdown("##### Similar structures in PubChem")
-        display_pubchem_pandas(cpds)
+with col_agents:
+    st.markdown("#### Agent Activity")
+    st.divider()
 
-if isinstance(vs_output, pd.DataFrame):
-    st.markdown("##### Similar structures in ZINC")
-    try:
-        # If using PandasTools which requires libXrender.so.1
-        # from rdkit.Chem import PandasTools
-        # PandasTools.AddMoleculeColumnToFrame(vs_output, "smiles", "Molecule")
+    # Display tool calls in expanders
+    if st.session_state.tool_calls:
+        reversed_prompts = list(reversed(st.session_state.prompts_w_tools))
+        for j, tool_group in enumerate(reversed(st.session_state.tool_calls)):
+            st.markdown(f"**Tools calls:** {reversed_prompts[j][:80]}...")
+            for idx, tool_call in enumerate(tool_group):
+                # Create badge for function name
+                st.badge(f"{idx+1}. 🔧{tool_call['function_name']}", color="green")
 
-        # pandas_html = re.sub(
-        #     r"^<table",
-        #     '<table width="100%"',
-        #     vs_output.to_html(escape=False),
-        # )
-        # st.markdown(pandas_html, unsafe_allow_html=True)
+                with st.expander("View details", expanded=False):
+                    # Display parameters as captions
+                    if tool_call["parameters"]:
+                        for param_name, param_value in tool_call["parameters"].items():
+                            st.caption(f"**{param_name}:** {param_value}")
 
-        # If using svg_to_data_url
-        vs_output["structure"] = (
-            vs_output["smiles"].apply(smiles2svg).apply(svg_to_data_url)
-        )
-        # Reorder columns
-        col_order = (
-            ["structure"]
-            + vs_config["zinc"]["col_display"]
-            + vs_config["zinc"]["col_simscore"]
-        )
-        st.dataframe(
-            vs_output[col_order],
-            row_height=100,
-            column_config={
-                "structure": st.column_config.ImageColumn("Structure", width="large")
-            },
-            hide_index=True,
-            use_container_width=True,
-        )
-
-    except Exception as e:
-        st.error(f"Error with displaying vs_output: {e}")
-elif isinstance(vs_output, str):
-    st.error(f"Vector Search exception: {vs_output}")
+                    # Display thinking
+                    if tool_call["thinking"]:
+                        st.info(tool_call["thinking"])
+            st.divider()
+    else:
+        st.info("🤖 Enter a query to see agent activity")
