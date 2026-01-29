@@ -126,7 +126,7 @@ agents = [
 ]
 
 # Load tools from tab-delimited file
-df_tools = pd.read_csv("tools.txt", sep="\t")
+df_tools = pd.read_csv(f"{app_root}/tools.txt", sep="\t")
 TOOLS = list(df_tools.itertuples(index=False, name=None))
 
 # ============================================================================
@@ -360,8 +360,8 @@ with col_chat:
                         input_dict=st.session_state.messages[-1], client=client
                     )  # returns response.json()
                     # Write response to file
-                    with open("response_json.txt", "w") as f:
-                        f.write(pformat(response_json, width=120))
+                    # with open("response_json.txt", "w") as f:
+                    #     f.write(pformat(response_json, width=120))
                     text_contents = extract_text_content(response_json)
                     if len(text_contents) > 0:
                         # Parse tool calls from the text content
@@ -369,7 +369,6 @@ with col_chat:
                         cleaned_texts = []
                         # agent keeps appending according to thread_id so just get the last one
                         response_list = [text_contents[-1]]
-                        print(response_list[0])
                         for text_content in response_list:
                             tool_calls = parse_tool_calls(text_content)
                             all_tool_calls.extend(tool_calls)

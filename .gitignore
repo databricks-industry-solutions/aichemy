@@ -1,7 +1,9 @@
 # Databricks Asset Bundle files
 .databricks/
 .github/
+
 data/
+apps/app/response_json.txt
 
 # IDE files
 .vscode/
