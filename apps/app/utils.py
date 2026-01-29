@@ -3,6 +3,7 @@ import requests
 import json
 import streamlit as st
 from databricks.sdk import WorkspaceClient
+import base64
 
 
 def get_user_info():
@@ -42,7 +43,7 @@ def ask_agent_mlflowclient(input_dict: dict, client) -> dict:
     # returns response.json()
     return client.predict(endpoint=os.getenv("SERVING_ENDPOINT"), inputs=input_dict)
 
-
+  
 def extract_text_content(response_json):
     # Extract text content from the response (equivalent to jq extraction)
     # jq -r '.output[] | select(.type == "message") | .content[] | .text'
@@ -156,3 +157,4 @@ def extract_tokens_from_spans(response_json: dict):
                     
                     # Print to console
                     print(f"{token_count}. {repr(token)}")
+
