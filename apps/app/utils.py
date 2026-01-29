@@ -138,23 +138,47 @@ def strip_tool_call_tags(text_content):
     return text_content
 
 
-def extract_tokens_from_spans(response_json: dict):
-    """Recursively extract tokens from spans and stream to file"""
-    spans = response_json.get('databricks_output', {}).get('trace', {}).get('data', {}).get('spans', [])
-
-    global token_count
+def parse_genie_results(response_json):
+    """
+    Parse response JSON for poll_query_results spans and extract result and query from spanOutputs.
+    
+    Args:
+        response_json: Dictionary or JSON string containing the response data
+    
+    Returns:
+        list: List of dictionaries containing extracted poll_query_results data.
+              Each dict has: 'result', 'query', 'description', 'conversation_id'
+              Returns empty list if no poll_query_results spans found.
+    """
+    # Convert string to dict if needed
+    if isinstance(response_json, str):
+        response_json = json.loads(response_json)
+    
+    results = []
+    
+    # Navigate to spans
+    try:
+        spans = response_json.get('databricks_output', {}).get('trace', {}).get('data', {}).get('spans', [])
+    except (AttributeError, KeyError):
+        return results
+    
+    # Find all poll_query_results spans
     for span in spans:
-        if 'events' in span and span['events']:
-            for event in span['events']:
-                if 'attributes' in event and 'token' in event['attributes']:
-                    token = event['attributes']['token']
-                    tokens.append(token)
-                    token_count += 1
-                    
-                    # Write token immediately to file
-                    output_file.write(f"{token_count}. {token}\n")
-                    output_file.flush()
-                    
-                    # Print to console
-                    print(f"{token_count}. {repr(token)}")
+        span_name = span.get('name', '')
+        if span_name == 'poll_query_results':
+            attributes = span.get('attributes', {})
+            span_outputs = attributes.get('mlflow.spanOutputs', '{}')
+            
+            # Parse the spanOutputs JSON string
+            try:
+                outputs = json.loads(span_outputs)
+                result_data = {
+                    'result': outputs.get('result', ''),
+                    'query': outputs.get('query', ''),
+                    'description': outputs.get('description', ''),
+                }
+                results.append(result_data)
+            except json.JSONDecodeError:
+                continue 
+    return results
 
