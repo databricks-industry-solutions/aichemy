@@ -174,7 +174,7 @@ def stop_processing():
 # ============================================================================
 
 with st.sidebar:
-    st.logo("logo.svg", size="large", link=None)
+    st.logo(f"{app_root}/logo.svg", size="large", link=None)
     st.markdown(
         """
     <div style="background: #e6f4ef; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px;
