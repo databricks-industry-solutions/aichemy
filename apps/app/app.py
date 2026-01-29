@@ -7,6 +7,8 @@ from pprint import pformat
 import time
 from io import BytesIO
 import pandas as pd
+import sys
+from pathlib import Path
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -15,6 +17,13 @@ logger = logging.getLogger(__name__)
 # w = WorkspaceClient()
 client = get_deploy_client("databricks")
 user_info = get_user_info()
+
+# Add project root to sys.path using absolute path
+project_root = Path(__file__).resolve().parent.parent.parent
+app_root = Path(__file__).resolve().parent
+sys.path.insert(0, str(app_root))
+sys.path.insert(0, str(project_root))
+print(f"sys.path: {sys.path}")
 
 # ============================================================================
 # Page Config
@@ -191,7 +200,7 @@ with st.sidebar:
 
     # Available tools 
     st.markdown("**Available tools**")
-    opentargets_expander = st.expander("🎯 OpenTargets MCP", expanded=False)
+    opentargets_expander = st.expander("🎯OpenTargets MCP", expanded=False)
     pubchem_expander = st.expander("🧪 PubChem MCP", expanded=False)        
     utils_expander = st.expander("🛠️ Chem Utilities", expanded=False)
     pubmed_expander = st.expander("📚 PubMed MCP", expanded=False)
