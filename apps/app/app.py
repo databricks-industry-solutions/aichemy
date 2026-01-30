@@ -1,7 +1,7 @@
 import logging
 import streamlit as st
 from mlflow.deployments import get_deploy_client
-from utils import get_user_info, ask_agent_mlflowclient, extract_text_content, parse_tool_calls, strip_tool_call_tags
+from utils import get_user_info, ask_agent_mlflowclient, extract_text_content, parse_tool_calls, strip_tool_call_tags, parse_genie_results
 from uuid import uuid4
 from pprint import pformat
 import time
@@ -140,6 +140,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "tool_calls" not in st.session_state:
     st.session_state.tool_calls = []
+if "genie" not in st.session_state:
+    st.session_state.genie = []
 if "workflow" not in st.session_state:
     st.session_state.workflow = None
 if "is_processing" not in st.session_state:
@@ -150,6 +152,8 @@ if "stop" not in st.session_state:
     st.session_state.stop = False
 if "prompts_w_tools" not in st.session_state:
     st.session_state.prompts_w_tools = []
+if "prompts_w_genie" not in st.session_state:
+    st.session_state.prompts_w_genie = []
 if "workflow_input" not in st.session_state:
     st.session_state.workflow_input = None
 
@@ -255,11 +259,13 @@ with col_chat:
             st.session_state.thread_id = str(uuid4())
             st.session_state.messages = []
             st.session_state.tool_calls = []
+            st.session_state.genie = []
             st.session_state.workflow = None
             st.session_state.is_processing = False
             st.session_state.last_processed_input = None            
             st.session_state.stop = False
-            st.session_state.prompts_w_tools = [] 
+            st.session_state.prompts_w_tools = []
+            st.session_state.prompts_w_genie = [] 
             st.rerun()
 
     if st.session_state.workflow == WORKFLOWS[0]:
@@ -336,15 +342,15 @@ with col_chat:
         with st.chat_message("user"):
             st.markdown(prompt)
 
+        input_dict = {
+            "input": [{"role": "user", "content": prompt}],
+            "custom_inputs": {"thread_id": st.session_state.thread_id},
+            "databricks_options": {"return_trace": True}
+        }
+
         # Append query to messages
-        st.session_state.messages.append(
-            {
-                "input": [{"role": "user", "content": prompt}],
-                "custom_inputs": {"thread_id": st.session_state.thread_id},
-                #           "databricks_options": {"return_trace": True}
-            }
-        )
-        print(f"Last msg:{pformat(st.session_state.messages[-1], width=120)}")
+        st.session_state.messages.append(input_dict)
+        print(f"Last msg:{pformat(input_dict, width=120)}")
     
         # Check if we need to actually make the API call
         # (last message should be a user message without a corresponding assistant response)
@@ -357,12 +363,13 @@ with col_chat:
                 if st.session_state.is_processing and not st.session_state.stop:
                     # Query the agent endpoint
                     response_json = ask_agent_mlflowclient(
-                        input_dict=st.session_state.messages[-1], client=client
+                        input_dict, client=client
                     )  # returns response.json()
                     # Write response to file
                     # with open("response_json.txt", "w") as f:
                     #     f.write(pformat(response_json, width=120))
                     text_contents = extract_text_content(response_json)
+                    genie_results = parse_genie_results(response_json)
                     if len(text_contents) > 0:
                         # Parse tool calls from the text content
                         all_tool_calls = []
@@ -379,6 +386,9 @@ with col_chat:
                         if len(all_tool_calls) > 0:
                             st.session_state.tool_calls.append(all_tool_calls)
                             st.session_state.prompts_w_tools.append(prompt)
+                        if len(genie_results) > 0:
+                            st.session_state.genie.append(genie_results)
+                            st.session_state.prompts_w_genie.append(prompt)
                         # Join cleaned text contents
                         assistant_response = "\n\n".join(cleaned_texts) if cleaned_texts else ""
                     else:
@@ -412,12 +422,10 @@ with col_agents:
     if st.session_state.tool_calls:
         reversed_prompts = list(reversed(st.session_state.prompts_w_tools))
         for j, tool_group in enumerate(reversed(st.session_state.tool_calls)):
-            st.markdown(f"**Tools calls:** {reversed_prompts[j][:80]}...")
+            st.markdown(f"**Tools calls:** _{reversed_prompts[j][:80]}..._")
             for idx, tool_call in enumerate(tool_group):
                 # Create badge for function name
-                st.badge(f"{idx+1}. 🔧{tool_call['function_name']}", color="green")
-
-                with st.expander("View details", expanded=False):
+                with st.expander(rf":green[{idx+1}. 🔧{tool_call['function_name']}]", expanded=False):
                     # Display parameters as captions
                     if tool_call["parameters"]:
                         for param_name, param_value in tool_call["parameters"].items():
@@ -427,5 +435,13 @@ with col_agents:
                     if tool_call["thinking"]:
                         st.info(tool_call["thinking"])
             st.divider()
-    else:
-        st.info("🤖 Enter a query to see agent activity")
+
+    if st.session_state.genie:
+        reversed_prompts_genie = list(reversed(st.session_state.prompts_w_genie))
+        for p, genie_group in enumerate(reversed(st.session_state.genie)):
+            for k, g in enumerate(genie_group):
+                with st.expander(rf":green[**SQL:**] _{reversed_prompts_genie[p][:80]}..._", expanded=False):
+                    # Display parameters as captions
+                    st.caption(g['description'])
+                    st.code(g['query'], wrap_lines=True)
+            st.divider()
