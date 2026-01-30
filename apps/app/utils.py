@@ -181,4 +181,3 @@ def parse_genie_results(response_json):
             except json.JSONDecodeError:
                 continue 
     return results
-
