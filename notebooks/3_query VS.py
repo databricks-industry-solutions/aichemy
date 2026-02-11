@@ -49,6 +49,7 @@ results = index.similarity_search(
     num_results=3,
     #filters={"molecular_weight >": 250, "molecular_weight <=": 500}
     )
+results
 
 # COMMAND ----------
 

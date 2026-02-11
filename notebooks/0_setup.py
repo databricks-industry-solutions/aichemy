@@ -31,19 +31,19 @@ cfg.to_dict()
 
 # COMMAND ----------
 
-ws_info = ws_client.current_user.me()
-display(ws_info)
-
-# COMMAND ----------
-
 from databricks.sdk import WorkspaceClient
 
 instance_name = cfg.get("lakebase").get("instance_name")
 ws_client = WorkspaceClient(
-    host=cfg.get("host"),
-    client_id=client_id,
-    client_secret=client_secret
+    # host=cfg.get("host"),
+    # client_id=client_id,
+    # client_secret=client_secret
 )
+
+# COMMAND ----------
+
+ws_info = ws_client.current_user.me()
+display(ws_info)
 
 # COMMAND ----------
 
@@ -71,7 +71,7 @@ from src.lakebase import LakebaseConnect
 from databricks.sdk import WorkspaceClient
 
 dbClient = LakebaseConnect(
-    user = client_id,
+    user = "yen.low@databricks.com",
     password = None, # leave None to generate ephemeral token (1h)
     instance_name = cfg.get("lakebase").get("instance_name"), 
     database = cfg.get("lakebase").get("database"),
