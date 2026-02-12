@@ -10,11 +10,13 @@ from langchain_core.messages import (
 )
 from databricks.sdk import WorkspaceClient
 from mlflow.pyfunc import ResponsesAgent
+from mlflow.types.responses import to_chat_completions_input
 from mlflow.types.responses import (
     ResponsesAgentRequest,
     ResponsesAgentResponse,
     ResponsesAgentStreamEvent,
     output_to_responses_items_stream,
+    to_chat_completions_input
 )
 from databricks_langchain import AsyncCheckpointSaver
 from typing import Any, Generator, Optional
@@ -67,8 +69,7 @@ class WrappedAgent(ResponsesAgent):
 
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
         thread_id = self._get_or_create_thread_id(request)
-        # request.custom_inputs.set("thread_id", thread_id)
-        cc_msgs = self.prep_msgs_for_cc_llm([i.model_dump() for i in request.input])
+        cc_msgs = to_chat_completions_input([i.model_dump() for i in request.input])
         config = {"configurable": {"thread_id": thread_id}}
         async def apredict(cc_msgs, config):
             events = []
@@ -89,7 +90,7 @@ class WrappedAgent(ResponsesAgent):
                 workspace_client=self.workspace_client
                 ) as checkpointer:
                 # if first time
-                # await checkpointer.setup()
+                await checkpointer.setup()
                 self.agent = self._add_memory(checkpointer)
                 return await apredict(cc_msgs, config)
             

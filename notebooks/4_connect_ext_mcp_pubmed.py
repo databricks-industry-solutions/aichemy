@@ -59,7 +59,7 @@ os.environ["pubmed_glama_api"] = pubmed_api
 # MAGIC TYPE HTTP
 # MAGIC OPTIONS (
 # MAGIC   host 'https://glama.ai',
-# MAGIC   base_path '/endpoints/mp1ke6xrpi/mcp/',
+# MAGIC   base_path '/endpoints/mp1ke6xrpi/mcp',
 # MAGIC   bearer_token secret('aichemy', 'pubmed_glama_api')
 # MAGIC )
 # MAGIC COMMENT 'Create connection with external PubMed MCP server openpharma on glama.ai'
@@ -116,7 +116,7 @@ os.environ["pubmed_glama_api"] = pubmed_api
 # MAGIC   headers => map(
 # MAGIC     'Content-Type', 'application/json',
 # MAGIC     'Accept', 'application/json, text/event-stream',
-# MAGIC     'Mcp-Session-Id', '86788fcd-90ad-4bc3-8567-75d82edd4e3c'
+# MAGIC     'Mcp-Session-Id', '2bb76a1e-3ade-4eb8-a4f0-fc9542dac62d'
 # MAGIC   )
 # MAGIC );
 
@@ -137,7 +137,7 @@ response = ws_client.serving_endpoints.http_request(
   json={"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2},
   headers={"Content-Type": "application/json",
     "Accept": "application/json, text/event-stream",
-    "Mcp-Session-Id": "86788fcd-90ad-4bc3-8567-75d82edd4e3c"}\
+    "Mcp-Session-Id": "2bb76a1e-3ade-4eb8-a4f0-fc9542dac62d"}\
 )
 pprint(response.__dict__)
 

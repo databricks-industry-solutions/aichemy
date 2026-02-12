@@ -44,19 +44,20 @@ from src.utils import get_SP_credentials
 
 # Enter client_id, client_secret of SP if any or get from WorkspaceClient.secrets
 # Do not use dbutils.secrets.get(scope="yen", key="client_secret") which is unsupported in mlflow logging in Driver
-client_id, client_secret = get_SP_credentials(
-    scope='aichemy',
-    client_id_key='client_id', #if retrieving secrets (but doesn't work with mlflow logging)
-    client_secret_key='client_secret', #if retrieving secrets (but doesn't work with mlflow logging)
-    # must provide hardcoded values as mlflow log_model cannot retrieve secrets
-    client_id_value = "client_id", # Hardcode client_id if any
-    client_secret_value = "client_secret" # Hardcode client_secret if any
-)
-ws_client = WorkspaceClient(
-    host=cfg.get("host"),
-    client_id=client_id,
-    client_secret=client_secret
-)
+# client_id, client_secret = get_SP_credentials(
+#     scope='aichemy',
+#     client_id_key='client_id', #if retrieving secrets (but doesn't work with mlflow logging)
+#     client_secret_key='client_secret', #if retrieving secrets (but doesn't work with mlflow logging)
+#     # must provide hardcoded values as mlflow log_model cannot retrieve secrets
+#     client_id_value = "client_id", # Hardcode client_id if any
+#     client_secret_value = "client_secret" # Hardcode client_secret if any
+# )
+# ws_client = WorkspaceClient(
+#     host=cfg.get("host"),
+#     client_id=client_id,
+#     client_secret=client_secret
+# )
+ws_client = WorkspaceClient()
 
 # COMMAND ----------
 
@@ -84,7 +85,9 @@ util_agent = create_agent(
 # COMMAND ----------
 
 tools = []
-tools.extend(('Chem Utils', i.name.split("__")[-1], i.description) for i in python_tools)
+chem_tool_data = [('Chem Utils', i.name.split("__")[-1], i.description) for i in python_tools]
+n_chem_tool_data = len(chem_tool_data)
+tools.extend(chem_tool_data)
 [i for i in tools]
 
 # COMMAND ----------
@@ -167,6 +170,10 @@ zinc_agent = create_agent(
 
 # COMMAND ----------
 
+# MAGIC %pip show mlflow
+
+# COMMAND ----------
+
 from databricks_langchain import DatabricksMultiServerMCPClient, DatabricksMCPServer, MCPServer
 
 mcp_client = DatabricksMultiServerMCPClient(
@@ -185,17 +192,17 @@ mcp_client = DatabricksMultiServerMCPClient(
             terminate_on_close=False
         ),
         # Using the UC connection url doesn't work
-        # DatabricksMCPServer(
-        #     name="opentargets",
-        #     url=f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("opentargets")}',
-        #     workspace_client=ws_client
-        # ),
-        # Using the original url works
-        MCPServer(
+        DatabricksMCPServer(
             name="opentargets",
-            url="https://mcp.platform.opentargets.org/mcp",
-#            headers={"X-API-Key": "no_bearer_token"},
+            url=f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("opentargets")}',
+            workspace_client=ws_client
         ),
+        # Using the original url works
+#         MCPServer(
+#             name="opentargets",
+#             url="https://mcp.platform.opentargets.org/mcp",
+# #            headers={"X-API-Key": "no_bearer_token"},
+#         ),
     ]
 )
 
@@ -226,40 +233,29 @@ mcp_agent = create_agent(
 
 # COMMAND ----------
 
-import pandas as pd
+# import pandas as pd
 
 # mcp_tools_list = await mcp_client.get_tools()
-names = ["PubChem"] * 29 + ["PubMed"] * 12 + ["OpenTargets"] * 5
-tools.extend([(i, j.name, j.description.split("\n")[0]) for i,j in zip(names, mcp_tools_list)])
-pd.DataFrame(tools, columns=["Agent", "Tool", "Description"]).to_csv("../apps/app/tools.txt", sep="\t", index=False)
+# names = ["PubChem"] * 29 + ["PubMed"] * 12 + ["OpenTargets"] * 5
+# tools.extend([(i, j.name, j.description.split("\n")[0]) for i,j in zip(names, mcp_tools_list)])
+# pd.DataFrame(tools, columns=["Agent", "Tool", "Description"]).to_csv("../apps/app/tools.txt", sep="\t", index=False)
 
 # COMMAND ----------
 
 # 42 sec when using MultiServerMCPClient vs 1.88 min databricks-mcp
-# input_example = {
-#     "messages": [
-#         {
-#             "role": "user",
-#             "content": "What is the mw of danuglipron?"
-#         }
-#     ]
-# }
-# await mcp_agent.ainvoke(input_example)
+input_example = {
+    "messages": [
+        {
+            "role": "user",
+            "content": "What is the cid of aspirin?"
+        }
+    ]
+}
+await mcp_agent.ainvoke(input_example)
 
 # COMMAND ----------
 
-# input_example = {
-#     "messages": [
-#         {
-#             "role": "user",
-#             "content": "What is the mw of danuglipron?"
-#         }
-#     ]
-# }
-# pubchem_agent.invoke(input_example)
-
-# COMMAND ----------
-
+# DBTITLE 1,Cell 25
 from langgraph_supervisor import create_supervisor
 
 supervisor_prompt = """You are a supervisor managing 4 agents. Route according to the agent required to fulfill the request.
@@ -290,16 +286,17 @@ workflow = create_supervisor(
 
 # COMMAND ----------
 
-# workflow.compile().invoke({"messages": [{"role": "user", "content": "Show the aspirin molecule. First get its CID from PubChem then get the molecule_png_url then display in markdown"}]})
+#qstring = "Show the aspirin molecule. First get its CID, then get the PubChem image URL based on the CID."
+#workflow.compile().invoke({"messages": [{"role": "user", "content": qstring}]})
 
 # COMMAND ----------
 
-# await workflow.compile().ainvoke({"messages": [{"role": "user", "content": "Show the aspirin molecule. First get its CID from PubChem then get the molecule_png_url then display in markdown"}]})
+await workflow.compile().ainvoke({"messages": [{"role": "user", "content": qstring}]})
 
 # COMMAND ----------
 
-# async for chunk in workflow.compile().astream({"messages": [{"role": "user", "content": "Show the aspirin molecule"}]}):
-#     print(chunk, flush=True)
+async for chunk in workflow.compile().astream({"messages": [{"role": "user", "content": qstring}]}):
+    print(chunk, flush=True)
 
 # COMMAND ----------
 
@@ -310,9 +307,92 @@ workflow = create_supervisor(
 
 # COMMAND ----------
 
+import asyncio
+from typing import Annotated, Any, AsyncGenerator, Generator, Optional, Sequence
+from mlflow.pyfunc import ResponsesAgent
+from mlflow.types.responses import (
+    ResponsesAgentRequest,
+    ResponsesAgentResponse,
+    ResponsesAgentStreamEvent,
+    output_to_responses_items_stream,
+    to_chat_completions_input,
+)
+from langchain_core.messages.tool import ToolMessage
+from langchain.messages import AIMessage, AIMessageChunk, AnyMessage
+import json
+
+class WrappedAgent(ResponsesAgent):
+    def __init__(self, agent):
+        self.agent = agent
+
+    # Make a prediction (single-step) for the agent
+    def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
+        outputs = [
+            event.item
+            for event in self.predict_stream(request)
+            if event.type == "response.output_item.done" or event.type == "error"
+        ]
+        return ResponsesAgentResponse(output=outputs, custom_outputs=request.custom_inputs)
+
+    async def _predict_stream_async(
+        self,
+        request: ResponsesAgentRequest,
+    ) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
+        cc_msgs = to_chat_completions_input([i.model_dump() for i in request.input])
+        # Stream events from the agent graph
+        async for event in self.agent.astream(
+            {"messages": cc_msgs}, stream_mode=["updates", "messages"]
+        ):
+            if event[0] == "updates":
+                # Stream updated messages from the workflow nodes
+                for node_data in event[1].values():
+                    if len(node_data.get("messages", [])) > 0:
+                        all_messages = []
+                        for msg in node_data["messages"]:
+                            if isinstance(msg, ToolMessage) and not isinstance(msg.content, str):
+                                msg.content = json.dumps(msg.content)
+                            all_messages.append(msg)
+                        for item in output_to_responses_items_stream(all_messages):
+                            yield item
+            elif event[0] == "messages":
+                # Stream generated text message chunks
+                try:
+                    chunk = event[1][0]
+                    if isinstance(chunk, AIMessageChunk) and (content := chunk.content):
+                        yield ResponsesAgentStreamEvent(
+                            **self.create_text_delta(delta=content, item_id=chunk.id),
+                        )
+                except:
+                    pass
+
+    # Stream predictions for the agent, yielding output as it's generated
+    def predict_stream(
+        self, request: ResponsesAgentRequest
+    ) -> Generator[ResponsesAgentStreamEvent, None, None]:
+        agen = self._predict_stream_async(request)
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        ait = agen.__aiter__()
+
+        while True:
+            try:
+                item = loop.run_until_complete(ait.__anext__())
+            except StopAsyncIteration:
+                break
+            else:
+                yield item
+
+# COMMAND ----------
+
 from src.responses_agent import WrappedAgent
 
-agent = WrappedAgent(workflow=workflow, workspace_client=ws_client, lakebase_instance=cfg.get("lakebase").get("instance_name"))
+agent = WrappedAgent(workflow=workflow, workspace_client=ws_client, lakebase_instance=cfg.get("lakebase_agent").get("instance_name"))
+# agent = WrappedAgent(workflow.compile())
 mlflow.models.set_model(agent)
 
 # COMMAND ----------
@@ -336,29 +416,21 @@ mlflow.models.set_model(agent)
 
 # COMMAND ----------
 
-# from uuid import uuid4
-# import nest_asyncio
-# nest_asyncio.apply()
-#
 # thread_id = str(uuid4())
 # inputs = {
-#     "input": [{"role": "user", "content": "What is the CID of danuglipron?"}], 
+#     "input": [{"role": "user", "content": "What is the CID of aspirin?"}], 
 #     "custom_inputs": {"thread_id": thread_id}
 # }
 # response1 = agent.predict(inputs)
 
 # COMMAND ----------
 
-# inputs = {
-#     "input": [{"role": "user", "content": "What is its molecular structure?"}], 
-#     "custom_inputs": {"thread_id": thread_id}
-# }
-# response2 = agent.predict(inputs)
+inputs = {
+    "input": [{"role": "user", "content": "Show me its molecular structure?"}], 
+    "custom_inputs": {"thread_id": thread_id}
+}
+response2 = agent.predict(inputs)
 
 # COMMAND ----------
 
-# response3 = agent.predict({
-#     "input": [{"role": "user", "content": "Summarize the latest review on the safety of danuglipron"}], 
-#     "custom_inputs": {"thread_id": thread_id}
-#     })
-# response3
+

@@ -3,7 +3,7 @@ catalog: healthcare_lifesciences
 schema: qsar
 #llm_endpoint: databricks-gpt-5-2
 llm_endpoint: databricks-claude-opus-4-5
-genie_space_id: 01f0eaa5825418ce88ec537abc57fd77
+genie_space_id: 01f068270f5c1f898e11703361dce5b8
 genie_table: healthcare_lifesciences.qsar.drugbank_full
 uc_functions:
   - healthcare_lifesciences.qsar.get_embedding
@@ -19,6 +19,12 @@ retriever:
   vs_source: healthcare_lifesciences.qsar.zinc15_250k_full
   k: 5
 # for agentic memory
-lakebase:
+lakebase_agent:
   instance_name: aichemy
   database: aichemy
+# for app
+lakebase:
+  project_id: 605906e9-742e-4c1a-aef4-11f64b8a74c2
+  branch_id: br-aged-scene-d1iq7b6x
+  endpoint_id: ep-twilight-union-d1f3jv1k
+  database: databricks_postgres
