@@ -144,6 +144,7 @@ if "prompts_w_tools" not in st.session_state:
     st.session_state.prompts_w_tools = []
 if "prompts_w_genie" not in st.session_state:
     st.session_state.prompts_w_genie = []
+    
 
 def clear_workflow():
     st.session_state.workflow = None
@@ -366,6 +367,12 @@ with col_chat:
         }
         input_dict = input_dict_w_skill.copy()
         input_dict["input"] = [{"role": "user", "content": extract_user_request(prompt)}]
+
+        input_dict = {
+            "input": [{"role": "user", "content": prompt}],
+            "custom_inputs": {"thread_id": st.session_state.thread_id},
+            "databricks_options": {"return_trace": True}
+        }
 
         # Append query to messages
         st.session_state.messages.append(input_dict)
