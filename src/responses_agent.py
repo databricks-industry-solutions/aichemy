@@ -90,7 +90,7 @@ class WrappedAgent(ResponsesAgent):
                 workspace_client=self.workspace_client
                 ) as checkpointer:
                 # if first time
-                await checkpointer.setup()
+                # await checkpointer.setup()
                 self.agent = self._add_memory(checkpointer)
                 return await apredict(cc_msgs, config)
             

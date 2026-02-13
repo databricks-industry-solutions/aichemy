@@ -33,17 +33,17 @@ mlflow.set_registry_uri('databricks-uc')
 
 cfg = ModelConfig(development_config="config.yml")
 
-client_id, client_secret = get_SP_credentials(
-    scope='aichemy',
-    client_id_key='client_id', #if retrieving secrets (but doesn't work with mlflow logging)
-    client_secret_key='client_secret', #if retrieving secrets (but doesn't work with mlflow logging)
-)
+# client_id, client_secret = get_SP_credentials(
+#     scope='aichemy',
+#     client_id_key='client_id', #if retrieving secrets (but doesn't work with mlflow logging)
+#     client_secret_key='client_secret', #if retrieving secrets (but doesn't work with mlflow logging)
+# )
 
 # COMMAND ----------
 
 catalog_name = cfg.get("catalog")
 schema_name = cfg.get("schema")
-model_name = "multiagent"
+model_name = "aichemy"
 
 registered_name = f"{catalog_name}.{schema_name}.{model_name}"
 artifact_path = "agent"
@@ -52,7 +52,7 @@ artifact_path = "agent"
 
 from uuid import uuid4
 
-query = "What is the mw of danuglipron?"
+query = "What is the CID of aspirin?"
 input_message = {
     "messages": [
         {
@@ -106,8 +106,8 @@ with mlflow.start_run():
             DatabricksUCConnection(connection_name=cfg.get("uc_connections")["opentargets"]),
             DatabricksGenieSpace(genie_space_id=cfg.get("genie_space_id")),
             DatabricksTable(table_name=cfg.get("genie_table")),
-            DatabricksSQLWarehouse(warehouse_id="036e73c70fc97e1f"),
-            DatabricksLakebase(database_instance_name=cfg.get("lakebase")["instance_name"]),
+            DatabricksSQLWarehouse(warehouse_id="75fd8278393d07eb"),
+            DatabricksLakebase(database_instance_name=cfg.get("lakebase_agent")["instance_name"]),
         ]
     )
 
@@ -118,8 +118,8 @@ with mlflow.start_run():
 
 # COMMAND ----------
 
-# model_uri = f"runs:/{logged_agent_info.run_id}/{artifact_path}"
-model_uri = 'runs:/b7df8facc77e4432b6028f46ca0f3fb8/agent' #v11
+model_uri = f"runs:/{logged_agent_info.run_id}/{artifact_path}"
+# model_uri = 'runs:/ccf16b3759d64f7395081a668c1aac9d/agent' #v1
 model_uri
 
 # COMMAND ----------
@@ -135,24 +135,7 @@ input_message = {
     "messages": [
         {
             "role": "user",
-            "content": "Show me compounds similar to vemurafenib. Display their structures"
-        }
-    ]
-}
-input = {
-    "input": input_message["messages"],
-    "custom_inputs": {"thread_id": thread_id, "recursion_limit": 50}
-}
-response = loaded_model.predict(input)
-
-# COMMAND ----------
-
-thread_id = str(uuid4())
-input_message = {
-    "messages": [
-        {
-            "role": "user",
-            "content": "Get the ECFP4 fingerprint embedding of danuglipron as a bitstring using the get_embedding(smiles) tool in the chem_utils agent"
+            "content": "Get the ECFP4 fingerprint embedding of asprin as a bitstring using the get_embedding(smiles) tool in the chem_utils agent"
         }
     ]
 }
@@ -168,7 +151,7 @@ input_message = {
     "messages": [
         {
             "role": "user",
-            "content": "What molecule in ZINC is most structurally similar to danuglipron based on ECFP4?"
+            "content": "What molecule in ZINC is most structurally similar to aspirin based on ECFP4?"
         }
     ]
 }
@@ -227,12 +210,17 @@ latest_version
 from databricks import agents
 
 # Deploy the model to the review app and a model serving endpoint
-agents.deploy(model_name=registered_name, 
+agents.deploy(model_name=registered_name,
               model_version=latest_version,
               endpoint_name="aichemy",
-              scale_to_zero=True,
-              tags = {"endpointSource": "docs"},
+              scale_to_zero=False,
               environment_vars={
                 "MAX_MODEL_LOADING_TIMEOUT": "600",
-                "DATABRICKS_CLIENT_ID": client_id,
-                "DATABRICKS_CLIENT_SECRET": client_secret})
+                # "DATABRICKS_CLIENT_ID": client_id,
+                # "DATABRICKS_CLIENT_SECRET": client_secret
+                }
+              )
+
+# COMMAND ----------
+
+
