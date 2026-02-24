@@ -14,7 +14,8 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Union
@@ -38,6 +39,7 @@ class ProjectDB:
     def __init__(self, sqlite_path: str = "projects.db"):
         self._sqlite_path = sqlite_path
         self._use_pg = False
+        self._last_lakebase_error: Optional[str] = None
         self._lakebase_project_id: Optional[str] = None
         self._lakebase_branch_id: Optional[str] = None
         self._lakebase_endpoint_id: Optional[str] = None
@@ -63,7 +65,7 @@ class ProjectDB:
 
         Flow:
           1. Read config.yml for lakebase project_id / branch_id / endpoint_id / database
-          2. Use user's CLI auth to fetch SP credentials from Databricks secrets
+          2. Get SP credentials: env vars (Databricks Apps) > secrets API (local dev)
           3. Create an SP-authenticated WorkspaceClient
           4. Resolve endpoint host via w.postgres.get_endpoint()
           5. Generate an ephemeral OAuth token via w.postgres.generate_database_credential()
@@ -72,16 +74,11 @@ class ProjectDB:
         Falls back to SQLite if any step fails.
         """
         try:
-            from base64 import b64decode
-
             # 1. Read config.yml
-            cfg_path = Path(__file__).resolve().parent.parent.parent.parent / "notebooks" / "config.yml"
-            if not cfg_path.exists():
+            cfg = _load_config()
+            if not cfg:
                 print("[ProjectDB] config.yml not found, skipping Lakebase")
                 return False
-
-            with open(cfg_path) as f:
-                cfg = yaml.safe_load(f)
 
             lakebase_cfg = cfg.get("lakebase")
             if not lakebase_cfg or not lakebase_cfg.get("project_id"):
@@ -98,13 +95,20 @@ class ProjectDB:
             )
             host = cfg.get("host")
 
-            # 2. Fetch SP credentials from Databricks secrets
-            w = _get_workspace_client()
-            sp_id_b64 = w.secrets.get_secret("aichemy", "client_id").value
-            sp_secret_b64 = w.secrets.get_secret("aichemy", "client_secret").value
-            sp_client_id = b64decode(sp_id_b64).decode("utf-8")
-            sp_client_secret = b64decode(sp_secret_b64).decode("utf-8")
-            print(f"[ProjectDB] SP credentials retrieved (client_id={sp_client_id[:8]}...)")
+            # 2. Get SP credentials: env vars (Databricks Apps) > secrets API (local dev)
+            sp_client_id = os.getenv("SP_CLIENT_ID")
+            sp_client_secret = os.getenv("SP_CLIENT_SECRET")
+
+            if sp_client_id and sp_client_secret:
+                print("[ProjectDB] SP credentials from environment variables")
+            else:
+                from base64 import b64decode
+                w = _get_workspace_client()
+                sp_id_b64 = w.secrets.get_secret("aichemy", "client_id").value
+                sp_secret_b64 = w.secrets.get_secret("aichemy", "client_secret").value
+                sp_client_id = b64decode(sp_id_b64).decode("utf-8")
+                sp_client_secret = b64decode(sp_secret_b64).decode("utf-8")
+                print("[ProjectDB] SP credentials from secrets API")
 
             # 3. Create SP-authenticated client
             sp_client = WorkspaceClient(
@@ -138,7 +142,10 @@ class ProjectDB:
             return True
 
         except Exception as e:
-            print(f"[ProjectDB] Lakebase auto-connect failed ({e}), falling back to SQLite")
+            import traceback
+            tb = traceback.format_exc()
+            self._last_lakebase_error = tb
+            print(f"[ProjectDB] Lakebase auto-connect failed:\n{tb}")
             self._use_pg = False
             return False
 
@@ -206,11 +213,27 @@ class ProjectDB:
             conn.commit()
 
     def _create_pg_tables(self):
-        """Create the projects table in Lakebase if it doesn't exist."""
-        with self._conn() as conn:
-            cur = self._cursor(conn)
+        """Create the projects table in Lakebase if it doesn't exist.
+
+        Uses a plain psycopg connection (not the _conn context manager) because
+        this runs during init before _use_pg is set. Skips CREATE TABLE if the
+        table already exists to avoid ownership conflicts.
+        """
+        import psycopg
+        conninfo = self._build_conninfo()
+        with psycopg.connect(conninfo, connect_timeout=10) as conn:
+            cur = conn.cursor()
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS projects (
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_name = 'projects'
+                )
+            """)
+            if cur.fetchone()[0]:
+                print("[ProjectDB] projects table already exists, skipping CREATE")
+                return
+            cur.execute("""
+                CREATE TABLE projects (
                     id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
                     name TEXT NOT NULL,
@@ -359,23 +382,43 @@ app.add_middleware(
 )
 
 # Databricks client (lazily initialized — only needed for the agent proxy endpoint)
-DATABRICKS_HOST = os.getenv("DATABRICKS_HOST", "https://fevm-aichemy2.cloud.databricks.com")
+# Host is resolved from: DATABRICKS_HOST env var > config.yml > WorkspaceClient default auth
 _workspace_client = None
+
+def _load_config() -> dict:
+    """Load config.yml — checks app root first (deployed), then notebooks/ (local dev)."""
+    candidates = [
+        Path(__file__).resolve().parent.parent / "config.yml",
+        Path(__file__).resolve().parent.parent.parent.parent / "notebooks" / "config.yml",
+    ]
+    for cfg_path in candidates:
+        if cfg_path.exists():
+            with open(cfg_path) as f:
+                return yaml.safe_load(f) or {}
+    return {}
+
+def _resolve_databricks_host() -> Optional[str]:
+    """Resolve Databricks host from env var or config.yml (None lets SDK use default auth)."""
+    host = os.getenv("DATABRICKS_HOST")
+    if host:
+        return host
+    return _load_config().get("host")
+
+DATABRICKS_HOST = _resolve_databricks_host()
 
 def _get_workspace_client() -> WorkspaceClient:
     global _workspace_client
     if _workspace_client is None:
-        _workspace_client = WorkspaceClient(host=DATABRICKS_HOST)
+        kwargs = {}
+        if DATABRICKS_HOST:
+            kwargs["host"] = DATABRICKS_HOST
+        _workspace_client = WorkspaceClient(**kwargs)
     return _workspace_client
 
-# Initialize project database (lazy — Lakebase auto-detection happens on startup event)
+# Initialize project database — runs at import time (before the async event loop
+# starts) to avoid generator/async conflicts with the synchronous SDK + psycopg calls.
 db = ProjectDB(sqlite_path=os.getenv("PROJECTS_DB_PATH", "projects.db"))
-
-
-@app.on_event("startup")
-async def _startup_init_db():
-    """Auto-detect and connect to Lakebase on startup, fallback to SQLite."""
-    db.init()
+db.init()
 
 # ---------------------------------------------------------------------------
 # User identity — cached after first resolution
@@ -758,8 +801,12 @@ def extract_text_content(response_json: dict) -> list[str]:
 # Tools endpoint — serve the tools manifest
 # ---------------------------------------------------------------------------
 
-# Locate tools.txt relative to the Streamlit app (shared data)
-_TOOLS_PATH = Path(__file__).resolve().parent.parent.parent / "app" / "tools.txt"
+# Locate tools.txt – check react-app root first (deployed), then Streamlit app dir (local dev)
+_tools_candidates = [
+    Path(__file__).resolve().parent.parent / "tools.txt",           # react-app/tools.txt
+    Path(__file__).resolve().parent.parent.parent / "app" / "tools.txt",  # apps/app/tools.txt
+]
+_TOOLS_PATH = next((p for p in _tools_candidates if p.exists()), _tools_candidates[0])
 
 @app.get("/api/tools")
 async def get_tools():
@@ -781,8 +828,12 @@ async def get_tools():
 # Skills – discover, load, and build prompts with skill instructions
 # ---------------------------------------------------------------------------
 
-# The skills directory lives alongside the Streamlit app
-_SKILLS_DIR = Path(__file__).resolve().parent.parent.parent / "app" / "skills"
+# Skills directory — check app root first (deployed), then Streamlit app location (local dev)
+_skills_candidates = [
+    Path(__file__).resolve().parent.parent / "skills",
+    Path(__file__).resolve().parent.parent.parent / "app" / "skills",
+]
+_SKILLS_DIR = next((p for p in _skills_candidates if p.exists()), _skills_candidates[0])
 
 
 def _smart_title(s: str) -> str:
@@ -939,13 +990,139 @@ async def health_check():
     else:
         db_backend = "sqlite"
         db_detail = db._sqlite_path
-    return {
+    result = {
         "status": "healthy",
-        "host": DATABRICKS_HOST,
+        "host": DATABRICKS_HOST or "(resolved by SDK auth)",
         "db_backend": db_backend,
         "db_detail": db_detail,
     }
+    if db._last_lakebase_error:
+        result["lakebase_init_error"] = db._last_lakebase_error
+    return result
+
+# ---------------------------------------------------------------------------
+# Lakebase diagnostic endpoint — step-by-step connection test
+# ---------------------------------------------------------------------------
+
+@app.get("/api/debug/lakebase")
+async def debug_lakebase(request: Request):
+    """Run each Lakebase connection step individually and report where it fails."""
+    import databricks.sdk
+    steps = {"0_env": {
+        "sdk_version": getattr(databricks.sdk, "__version__", "unknown"),
+        "startup_error": db._last_lakebase_error,
+    }}
+
+    # Step 1: config.yml
+    try:
+        cfg = _load_config()
+        lakebase_cfg = cfg.get("lakebase", {}) if cfg else {}
+        steps["1_config"] = {
+            "ok": bool(lakebase_cfg.get("project_id")),
+            "project_id": lakebase_cfg.get("project_id"),
+            "branch_id": lakebase_cfg.get("branch_id"),
+            "endpoint_id": lakebase_cfg.get("endpoint_id"),
+            "database": lakebase_cfg.get("database"),
+            "host": cfg.get("host") if cfg else None,
+        }
+    except Exception as e:
+        steps["1_config"] = {"ok": False, "error": str(e)}
+
+    # Step 2: SP credentials
+    try:
+        sp_client_id = os.getenv("SP_CLIENT_ID")
+        sp_client_secret = os.getenv("SP_CLIENT_SECRET")
+        source = "env"
+        if not (sp_client_id and sp_client_secret):
+            from base64 import b64decode
+            w = _get_workspace_client()
+            sp_id_b64 = w.secrets.get_secret("aichemy", "client_id").value
+            sp_secret_b64 = w.secrets.get_secret("aichemy", "client_secret").value
+            sp_client_id = b64decode(sp_id_b64).decode("utf-8")
+            sp_client_secret = b64decode(sp_secret_b64).decode("utf-8")
+            source = "secrets_api"
+        steps["2_sp_credentials"] = {
+            "ok": True,
+            "source": source,
+            "client_id_prefix": sp_client_id[:8] + "..." if sp_client_id else None,
+        }
+    except Exception as e:
+        steps["2_sp_credentials"] = {"ok": False, "error": str(e)}
+        return {"steps": steps, "result": "FAILED at step 2"}
+
+    # Step 3: SP-authenticated WorkspaceClient
+    try:
+        host = (cfg or {}).get("host")
+        sp_client = WorkspaceClient(
+            host=host,
+            client_id=sp_client_id,
+            client_secret=sp_client_secret,
+        )
+        steps["3_sp_client"] = {"ok": True, "host": host}
+    except Exception as e:
+        steps["3_sp_client"] = {"ok": False, "error": str(e)}
+        return {"steps": steps, "result": "FAILED at step 3"}
+
+    # Step 4: Resolve Lakebase endpoint
+    try:
+        endpoint_name = (
+            f"projects/{lakebase_cfg['project_id']}"
+            f"/branches/{lakebase_cfg.get('branch_id', 'main')}"
+            f"/endpoints/{lakebase_cfg.get('endpoint_id', 'primary')}"
+        )
+        endpoint = sp_client.postgres.get_endpoint(name=endpoint_name)
+        pg_host = endpoint.status.hosts.host
+        steps["4_endpoint"] = {"ok": True, "pg_host": pg_host, "endpoint_name": endpoint_name}
+    except Exception as e:
+        steps["4_endpoint"] = {"ok": False, "error": str(e), "endpoint_name": endpoint_name}
+        return {"steps": steps, "result": "FAILED at step 4"}
+
+    # Step 5: Generate OAuth token
+    try:
+        cred = sp_client.postgres.generate_database_credential(endpoint=endpoint_name)
+        steps["5_token"] = {"ok": True, "token_length": len(cred.token) if cred.token else 0}
+    except Exception as e:
+        steps["5_token"] = {"ok": False, "error": str(e)}
+        return {"steps": steps, "result": "FAILED at step 5"}
+
+    # Step 6: Postgres connection test
+    try:
+        import psycopg
+        database = lakebase_cfg.get("database", "databricks_postgres")
+        conninfo = (
+            f"dbname={database} "
+            f"user={sp_client_id} "
+            f"password={cred.token} "
+            f"host={pg_host} "
+            f"sslmode=require"
+        )
+        with psycopg.connect(conninfo, connect_timeout=10) as conn:
+            conn.execute("SELECT 1")
+        steps["6_pg_connect"] = {"ok": True, "database": database}
+    except Exception as e:
+        steps["6_pg_connect"] = {"ok": False, "error": str(e)}
+        return {"steps": steps, "result": "FAILED at step 6"}
+
+    return {"steps": steps, "result": "ALL STEPS PASSED"}
+
+# ---------------------------------------------------------------------------
+# Static file serving — serves the built React frontend (dist/)
+# Must be mounted LAST so /api routes take priority.
+# ---------------------------------------------------------------------------
+
+_dist_dir = Path(__file__).resolve().parent.parent / "dist"
+if _dist_dir.exists():
+    app.mount("/assets", StaticFiles(directory=_dist_dir / "assets"), name="static-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        """Serve the React SPA — all non-API routes fall through to index.html."""
+        file_path = _dist_dir / full_path
+        if full_path and file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(_dist_dir / "index.html")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("DATABRICKS_APP_PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)

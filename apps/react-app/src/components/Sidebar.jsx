@@ -167,7 +167,10 @@ export default function Sidebar({
                 {tools[key] && (
                   <div className="tool-group-items">
                     {tools[key].map((t) => (
-                      <div key={t.name} className="tool-item">{t.name}</div>
+                      <div key={t.name} className="tool-item">
+                        <span className="tool-item-name">{t.name}</span>
+                        {t.description && <span className="tool-item-desc">{t.description}</span>}
+                      </div>
                     ))}
                   </div>
                 )}

@@ -1,0 +1,31 @@
+host: https://e2-demo-west.cloud.databricks.com/
+catalog: healthcare_lifesciences
+schema: qsar
+#llm_endpoint: databricks-gpt-5-2
+llm_endpoint: databricks-claude-opus-4-5
+genie_space_id: 01f068270f5c1f898e11703361dce5b8
+genie_table: healthcare_lifesciences.qsar.drugbank_full
+uc_functions:
+  - healthcare_lifesciences.qsar.get_embedding
+  - healthcare_lifesciences.qsar.molecule_png_url
+uc_connections:
+  pubchem: conn_aichemy_pubchem
+  pubmed: conn_aichemy_pubmed
+  opentargets: conn_aichemy_opentargets
+retriever:
+  tool_name: zinc_chemical_search
+  vs_endpoint: dbdemos_vs_endpoint
+  vs_index: healthcare_lifesciences.qsar.zinc_vs
+  vs_source: healthcare_lifesciences.qsar.zinc15_250k_full
+  k: 5
+# for agentic memory
+lakebase_agent:
+  instance_name: aichemy
+  database: aichemy
+# for app
+lakebase:
+  project_id: 605906e9-742e-4c1a-aef4-11f64b8a74c2
+  branch_id: br-aged-scene-d1iq7b6x
+  endpoint_id: ep-twilight-union-d1f3jv1k
+  database: databricks_postgres
+  
