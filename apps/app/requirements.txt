@@ -1,3 +1,0 @@
-databricks-sdk==0.55.0
-streamlit==1.45.1
-mlflow>3.8

@@ -54,8 +54,8 @@ client_id, client_secret = get_SP_credentials(
 )
 ws_client = WorkspaceClient(
     host=cfg.get("host"),
-    client_id="9cf20a1a-9248-45b9-a9fc-59022d726217",
-    client_secret="dosee2ed2047ce2c43af8d1e5c6b107988d1"
+    client_id=client_id,
+    client_secret=client_secret
 )
 
 # COMMAND ----------
@@ -202,7 +202,7 @@ nest_asyncio.apply()
 
 def get_tools(mcp_client: DatabricksMultiServerMCPClient):
     async def aget_tools():
-        await mcp_client.get_tools()
+        return await mcp_client.get_tools()
     return asyncio.run(aget_tools())
 mcp_tools = get_tools(mcp_client)
 mcp_prompt = """You are a multi-MCP server agent connected to:
