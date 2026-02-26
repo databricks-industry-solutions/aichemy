@@ -52,7 +52,7 @@ ws_client = WorkspaceClient()
 # MAGIC TYPE HTTP
 # MAGIC OPTIONS (
 # MAGIC   host 'https://mcp.platform.opentargets.org',
-# MAGIC   base_path '/mcp/',
+# MAGIC   base_path '/mcp',
 # MAGIC   bearer_token 'anything'
 # MAGIC )
 # MAGIC COMMENT 'Create connection with external Open Targets MCP server'
@@ -104,7 +104,7 @@ ws_client = WorkspaceClient()
 # MAGIC   headers => map(
 # MAGIC     'Content-Type', 'application/json',
 # MAGIC     'Accept', 'application/json, text/event-stream',
-# MAGIC     'Mcp-Session-Id', 'a7c7c59bf49c4fe0b7c573be6cd29f0d'
+# MAGIC     'Mcp-Session-Id', 'a623134b01f341c2ab532cc9ba48ff1f'
 # MAGIC   )
 # MAGIC );
 
@@ -125,7 +125,7 @@ response = ws_client.serving_endpoints.http_request(
   json={"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2},
   headers={"Content-Type": "application/json",
     "Accept": "application/json, text/event-stream",
-    "Mcp-Session-Id": "a7c7c59bf49c4fe0b7c573be6cd29f0d"}\
+    "Mcp-Session-Id": "a623134b01f341c2ab532cc9ba48ff1f"}\
 )
 pprint(response.__dict__)
 
@@ -182,4 +182,4 @@ mcp_client.list_tools()
 
 # COMMAND ----------
 
-mcp_client.call_tool("search_targets", {"query": "glp-1"}, terminate_on_close=False, timeout=120)
+mcp_client.call_tool("search_entities", {"query": "glp-1"})

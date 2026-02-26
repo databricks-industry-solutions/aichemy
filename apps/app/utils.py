@@ -20,16 +20,11 @@ def get_user_info():
 
 
 def ask_agent(input_dict: dict, w: WorkspaceClient = None) -> requests.models.Response:
-    # Example input_dict:
-    # input_dict = {
-    #     "input": [
-    #         {"role": "user", "content": "What is the latest customer service request?"}
-    #     ],
-    #     "custom_inputs": {"thread_id": "1001"},
-    # }
-    url = f'https://e2-demo-field-eng.cloud.databricks.com/serving-endpoints/{os.getenv("SERVING_ENDPOINT")}/invocations'
     if w is None:
         w = WorkspaceClient()
+    host = w.config.host.rstrip("/")
+    endpoint = os.getenv("SERVING_ENDPOINT", "aichemy")
+    url = f"{host}/serving-endpoints/{endpoint}/invocations"
     headers = w.config.authenticate()
     response = requests.post(
         headers=headers,

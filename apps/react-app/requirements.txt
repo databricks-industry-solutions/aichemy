@@ -1,0 +1,7 @@
+fastapi>=0.104.0
+uvicorn>=0.24.0
+mlflow>=2.9.0
+databricks-sdk>=0.44.0
+pydantic>=2.0.0
+PyYAML>=6.0
+psycopg[binary]>=3.1.0

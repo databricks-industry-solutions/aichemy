@@ -31,19 +31,20 @@ cfg.to_dict()
 
 # COMMAND ----------
 
-ws_info = ws_client.current_user.me()
-display(ws_info)
+from databricks.sdk import WorkspaceClient
+
+instance_name = cfg.get("lakebase_agent").get("instance_name")
+# ws_client = WorkspaceClient(
+#     host=cfg.get("host"),
+#     client_id=client_id,
+#     client_secret=client_secret
+# )
+ws_client = WorkspaceClient()
 
 # COMMAND ----------
 
-from databricks.sdk import WorkspaceClient
-
-instance_name = cfg.get("lakebase").get("instance_name")
-ws_client = WorkspaceClient(
-    host=cfg.get("host"),
-    client_id=client_id,
-    client_secret=client_secret
-)
+ws_info = ws_client.current_user.me()
+display(ws_info)
 
 # COMMAND ----------
 
@@ -67,17 +68,35 @@ else:  # database instance does not exist
 
 # COMMAND ----------
 
+del LakebaseConnect
+
+# COMMAND ----------
+
 from src.lakebase import LakebaseConnect
 from databricks.sdk import WorkspaceClient
 
+# Test connection to Provisioned Lakebase
 dbClient = LakebaseConnect(
-    user = client_id,
+    user = "yen.low@databricks.com",
     password = None, # leave None to generate ephemeral token (1h)
-    instance_name = cfg.get("lakebase").get("instance_name"), 
-    database = cfg.get("lakebase").get("database"),
+    instance_name = cfg.get("lakebase_agent").get("instance_name"), 
+    database = cfg.get("lakebase_agent").get("database"),
     wsClient = ws_client
 )
 dbClient.test_query()
+
+# COMMAND ----------
+
+# Test connection to autoscaled Lakebase
+dbClient2 = LakebaseConnect(
+    user = "yen.low@databricks.com",
+    password = None, # leave None to generate ephemeral token (1h)
+    project_id = cfg.get("lakebase").get("project_id"),
+    branch_id = cfg.get("lakebase").get("branch_id"),
+    endpoint_id = cfg.get("lakebase").get("endpoint_id"),
+    wsClient = ws_client
+)
+dbClient2.test_query()
 
 # COMMAND ----------
 
@@ -89,7 +108,7 @@ dbClient.test_query()
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC CREATE OR REPLACE FUNCTION aichemy2_catalog.aichemy.molecule_png_url(cid INTEGER)
+# MAGIC CREATE OR REPLACE FUNCTION healthcare_lifesciences.qsar.molecule_png_url(cid INTEGER)
 # MAGIC RETURNS STRING
 # MAGIC COMMENT 'Returns the molecule image url of a CID from PubChem'
 # MAGIC LANGUAGE PYTHON
@@ -101,7 +120,7 @@ dbClient.test_query()
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC CREATE OR REPLACE FUNCTION aichemy2_catalog.aichemy.get_embedding(smiles STRING)
+# MAGIC CREATE OR REPLACE FUNCTION healthcare_lifesciences.qsar.get_embedding(smiles STRING)
 # MAGIC RETURNS STRING
 # MAGIC COMMENT 'Returns the ECFP molecular fingerprint from SMILES'
 # MAGIC LANGUAGE PYTHON

@@ -116,7 +116,7 @@ os.environ["pubchem_glama_api"] = pubchem_api
 # MAGIC   headers => map(
 # MAGIC     'Content-Type', 'application/json',
 # MAGIC     'Accept', 'application/json, text/event-stream',
-# MAGIC     'Mcp-Session-Id', '68c0168e-fea4-4411-b436-398e10f1ede4'
+# MAGIC     'Mcp-Session-Id', 'd47738ae-7d76-409f-b8d0-b553fe640f3e'
 # MAGIC   )
 # MAGIC );
 
@@ -137,7 +137,7 @@ response = ws_client.serving_endpoints.http_request(
   json={"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2},
   headers={"Content-Type": "application/json",
     "Accept": "application/json, text/event-stream",
-    "Mcp-Session-Id": "f5cd033b-6ad2-4094-a885-1d56dae107bb"}\
+    "Mcp-Session-Id": "d47738ae-7d76-409f-b8d0-b553fe640f3e"}\
 )
 pprint(response.__dict__)
 
