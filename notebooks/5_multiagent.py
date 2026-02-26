@@ -54,8 +54,8 @@ client_id, client_secret = get_SP_credentials(
 )
 ws_client = WorkspaceClient(
     host=cfg.get("host"),
-    client_id=client_id,
-    client_secret=client_secret
+    client_id="9cf20a1a-9248-45b9-a9fc-59022d726217",
+    client_secret="dosee2ed2047ce2c43af8d1e5c6b107988d1"
 )
 
 # COMMAND ----------
@@ -83,9 +83,11 @@ util_agent = create_agent(
 
 # COMMAND ----------
 
-tools = []
-tools.extend(('Chem Utils', i.name.split("__")[-1], i.description) for i in python_tools)
-[i for i in tools]
+# tools = []
+# chem_tool_data = [('Chem Utils', i.name.split("__")[-1], i.description) for i in python_tools]
+# n_chem_tool_data = len(chem_tool_data)
+# tools.extend(chem_tool_data)
+# [i for i in tools]
 
 # COMMAND ----------
 
@@ -184,17 +186,10 @@ mcp_client = DatabricksMultiServerMCPClient(
             workspace_client=ws_client,
             terminate_on_close=False
         ),
-        # Using the UC connection url doesn't work
-        # DatabricksMCPServer(
-        #     name="opentargets",
-        #     url=f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("opentargets")}',
-        #     workspace_client=ws_client
-        # ),
-        # Using the original url works
-        MCPServer(
+        DatabricksMCPServer(
             name="opentargets",
-            url="https://mcp.platform.opentargets.org/mcp",
-#            headers={"X-API-Key": "no_bearer_token"},
+            url=f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("opentargets")}',
+            workspace_client=ws_client
         ),
     ]
 )
@@ -226,21 +221,21 @@ mcp_agent = create_agent(
 
 # COMMAND ----------
 
-import pandas as pd
+# import pandas as pd
 
 # mcp_tools_list = await mcp_client.get_tools()
-names = ["PubChem"] * 29 + ["PubMed"] * 12 + ["OpenTargets"] * 5
-tools.extend([(i, j.name, j.description.split("\n")[0]) for i,j in zip(names, mcp_tools_list)])
-pd.DataFrame(tools, columns=["Agent", "Tool", "Description"]).to_csv("../apps/app/tools.txt", sep="\t", index=False)
+# names = ["PubChem"] * 29 + ["PubMed"] * 12 + ["OpenTargets"] * 5
+# tools.extend([(i, j.name, j.description.split("\n")[0]) for i,j in zip(names, mcp_tools_list)])
+# pd.DataFrame(tools, columns=["Agent", "Tool", "Description"]).to_csv("../apps/app/tools.txt", sep="\t", index=False)
 
 # COMMAND ----------
 
-# 42 sec when using MultiServerMCPClient vs 1.88 min databricks-mcp
+# # 42 sec when using MultiServerMCPClient vs 1.88 min databricks-mcp
 # input_example = {
 #     "messages": [
 #         {
 #             "role": "user",
-#             "content": "What is the mw of danuglipron?"
+#             "content": "What is the cid of aspirin?"
 #         }
 #     ]
 # }
@@ -248,18 +243,7 @@ pd.DataFrame(tools, columns=["Agent", "Tool", "Description"]).to_csv("../apps/ap
 
 # COMMAND ----------
 
-# input_example = {
-#     "messages": [
-#         {
-#             "role": "user",
-#             "content": "What is the mw of danuglipron?"
-#         }
-#     ]
-# }
-# pubchem_agent.invoke(input_example)
-
-# COMMAND ----------
-
+# DBTITLE 1,Cell 25
 from langgraph_supervisor import create_supervisor
 
 supervisor_prompt = """You are a supervisor managing 4 agents. Route according to the agent required to fulfill the request.
@@ -290,15 +274,16 @@ workflow = create_supervisor(
 
 # COMMAND ----------
 
-# workflow.compile().invoke({"messages": [{"role": "user", "content": "Show the aspirin molecule. First get its CID from PubChem then get the molecule_png_url then display in markdown"}]})
+#qstring = "Show the aspirin molecule. First get its CID, then get the PubChem image URL based on the CID."
+#workflow.compile().invoke({"messages": [{"role": "user", "content": qstring}]})
 
 # COMMAND ----------
 
-# await workflow.compile().ainvoke({"messages": [{"role": "user", "content": "Show the aspirin molecule. First get its CID from PubChem then get the molecule_png_url then display in markdown"}]})
+# await workflow.compile().ainvoke({"messages": [{"role": "user", "content": qstring}]})
 
 # COMMAND ----------
 
-# async for chunk in workflow.compile().astream({"messages": [{"role": "user", "content": "Show the aspirin molecule"}]}):
+# async for chunk in workflow.compile().astream({"messages": [{"role": "user", "content": qstring}]}):
 #     print(chunk, flush=True)
 
 # COMMAND ----------
@@ -312,7 +297,7 @@ workflow = create_supervisor(
 
 from src.responses_agent import WrappedAgent
 
-agent = WrappedAgent(workflow=workflow, workspace_client=ws_client, lakebase_instance=cfg.get("lakebase").get("instance_name"))
+agent = WrappedAgent(workflow=workflow, workspace_client=ws_client, lakebase_instance=cfg.get("lakebase_agent").get("instance_name"))
 mlflow.models.set_model(agent)
 
 # COMMAND ----------
@@ -336,13 +321,9 @@ mlflow.models.set_model(agent)
 
 # COMMAND ----------
 
-# from uuid import uuid4
-# import nest_asyncio
-# nest_asyncio.apply()
-#
 # thread_id = str(uuid4())
 # inputs = {
-#     "input": [{"role": "user", "content": "What is the CID of danuglipron?"}], 
+#     "input": [{"role": "user", "content": "What is the CID of aspirin?"}], 
 #     "custom_inputs": {"thread_id": thread_id}
 # }
 # response1 = agent.predict(inputs)
@@ -350,15 +331,11 @@ mlflow.models.set_model(agent)
 # COMMAND ----------
 
 # inputs = {
-#     "input": [{"role": "user", "content": "What is its molecular structure?"}], 
+#     "input": [{"role": "user", "content": "Show me its molecular structure?"}], 
 #     "custom_inputs": {"thread_id": thread_id}
 # }
 # response2 = agent.predict(inputs)
 
 # COMMAND ----------
 
-# response3 = agent.predict({
-#     "input": [{"role": "user", "content": "Summarize the latest review on the safety of danuglipron"}], 
-#     "custom_inputs": {"thread_id": thread_id}
-#     })
-# response3
+
