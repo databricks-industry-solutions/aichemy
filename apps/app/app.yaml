@@ -1,9 +1,0 @@
-command:
-- streamlit
-- run
-- app.py
-env:
-- name: SERVING_ENDPOINT
-  value: aichemy
-- name: vs_index_zinc
-  value: aichemy2_catalog.aichemy.zinc_vs

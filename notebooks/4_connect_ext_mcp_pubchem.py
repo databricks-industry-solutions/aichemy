@@ -1,4 +1,8 @@
 # Databricks notebook source
+# MAGIC %md
+# MAGIC # Wrap PubChem External MCP in a UC HTTP Connection
+# COMMAND ----------
+
 # MAGIC %pip install -U databricks-mcp databricks-sdk databricks-langchain mlflow
 # MAGIC %restart_python
 
