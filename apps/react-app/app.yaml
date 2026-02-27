@@ -1,0 +1,10 @@
+command:
+  - python
+  - server/server.py
+env:
+  - name: SERVING_ENDPOINT
+    value: aichemy
+  - name: SP_CLIENT_ID
+    valueFrom: secret
+  - name: SP_CLIENT_SECRET
+    valueFrom: secret-2
