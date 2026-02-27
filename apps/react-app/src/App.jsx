@@ -38,10 +38,10 @@ const SKILL_FOLDER_BY_WORKFLOW = {
 }
 
 const EXAMPLE_QUESTIONS = [
-  "Get the latest review study on the GI toxicity of danuglipron",
   "What diseases are associated with EGFR",
-  "Show me compounds similar to vemurafenib. Display their structures",
   "List all the drugs in the GLP-1 agonists ATC class in DrugBank",
+  "Get the latest review study on the GI toxicity of danuglipron",
+  "Show me compounds similar to vemurafenib. Display their structures",
 ]
 
 export default function App() {
