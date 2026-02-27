@@ -1,7 +1,9 @@
 # Databricks Asset Bundle files
 .databricks/
-
 .github/
+
+data/
+apps/app/response_json.txt
 
 # IDE files
 .vscode/
@@ -26,4 +28,14 @@ build/
 
 # Environment files
 .env
-.env.local 
+.env.local
+
+# Node
+node_modules/
+
+# Virtual environments
+.venv/
+venv/
+
+# SQLite databases (local dev)
+*.db
