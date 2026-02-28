@@ -52,7 +52,27 @@ NB: Genie spaces need to be [created](https://docs.databricks.com/aws/en/genie/s
 | Package | License | Copyright |
 |---------|---------|-----------|
 | rdkit | Cheminformatics package (C++ and Python based) | BSD 3-Clause |
+| mols2grid | Interactive molecular grid viewer for Jupyter | BSD 3-Clause |
 | databricks-ai-bridge | APIs to interact with Databricks AI features such as AI/BI Genie and Vector Search | Databricks |
 | databricks-sdk | SDK to interact with Databricks | Apache 2.0 |
-| databricks-vectorsearch | SDK to interact with Databricks | Databricks |
-| streamlit | lightweight Python framework for developing web applications | Apache 2.0 |
+| databricks-vectorsearch | SDK to interact with Databricks Vector Search | Databricks |
+| databricks-langchain | LangChain integration for Databricks including memory | Apache 2.0 |
+| databricks-mcp | Model Context Protocol support for Databricks | Apache 2.0 |
+| databricks-agents | SDK for deploying and managing Databricks agents | Databricks |
+| mlflow | ML lifecycle management and agent serving framework | Apache 2.0 |
+| langchain-core | Core abstractions for the LangChain framework | MIT |
+| langchain-mcp-adapters | LangChain adapters for Model Context Protocol tools | MIT |
+| langgraph-supervisor | Multi-agent supervisor orchestration for LangGraph | MIT |
+| mcp | Model Context Protocol Python SDK | MIT |
+| openai | OpenAI API client library | Apache 2.0 |
+| fastapi | Modern Python web framework for building APIs | MIT |
+| uvicorn | ASGI web server for Python | BSD 3-Clause |
+| pydantic | Data validation using Python type annotations | MIT |
+| psycopg | PostgreSQL database adapter for Python | LGPL 3.0 |
+| PyYAML | YAML parser and emitter for Python | MIT |
+| react | JavaScript library for building user interfaces | MIT |
+| react-dom | React package for DOM rendering | MIT |
+| react-markdown | Markdown renderer for React | MIT |
+| remark-gfm | GitHub Flavored Markdown plugin for remark | MIT |
+| uuid | RFC-compliant UUID generation for JavaScript | MIT |
+| vite | Next-generation frontend build tool | MIT |
