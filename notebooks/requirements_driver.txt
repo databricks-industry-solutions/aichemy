@@ -250,7 +250,7 @@ tinycss2==1.2.1
 tokenize-rt==4.2.1
 tokenizers==0.22.2
 tomli==2.0.1
-tornado==6.1
+tornado==6.5
 tqdm==4.67.3
 traitlets==5.7.1
 typer==0.23.0
