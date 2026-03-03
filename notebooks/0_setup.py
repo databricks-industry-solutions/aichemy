@@ -34,12 +34,11 @@ cfg.to_dict()
 from databricks.sdk import WorkspaceClient
 
 instance_name = cfg.get("lakebase_agent").get("instance_name")
-# ws_client = WorkspaceClient(
-#     host=cfg.get("host"),
-#     client_id=client_id,
-#     client_secret=client_secret
-# )
-ws_client = WorkspaceClient()
+ws_client = WorkspaceClient(
+    host=cfg.get("host"),
+    client_id=client_id,
+    client_secret=client_secret
+)
 
 # COMMAND ----------
 
@@ -68,16 +67,12 @@ else:  # database instance does not exist
 
 # COMMAND ----------
 
-del LakebaseConnect
-
-# COMMAND ----------
-
 from src.lakebase import LakebaseConnect
 from databricks.sdk import WorkspaceClient
 
 # Test connection to Provisioned Lakebase
 dbClient = LakebaseConnect(
-    user = "yen.low@databricks.com",
+    user = client_id,
     password = None, # leave None to generate ephemeral token (1h)
     instance_name = cfg.get("lakebase_agent").get("instance_name"), 
     database = cfg.get("lakebase_agent").get("database"),
@@ -89,7 +84,7 @@ dbClient.test_query()
 
 # Test connection to autoscaled Lakebase
 dbClient2 = LakebaseConnect(
-    user = "yen.low@databricks.com",
+    user = client_id,
     password = None, # leave None to generate ephemeral token (1h)
     project_id = cfg.get("lakebase").get("project_id"),
     branch_id = cfg.get("lakebase").get("branch_id"),
