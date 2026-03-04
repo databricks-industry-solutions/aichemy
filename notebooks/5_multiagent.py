@@ -49,8 +49,8 @@ client_id, client_secret = get_SP_credentials(
     client_id_key='client_id', #if retrieving secrets (but doesn't work with mlflow logging)
     client_secret_key='client_secret', #if retrieving secrets (but doesn't work with mlflow logging)
     # must provide hardcoded values as mlflow log_model cannot retrieve secrets
-    client_id_value = "client_id", # Hardcode client_id if any
-    client_secret_value = "client_secret" # Hardcode client_secret if any
+    # client_id_value = "client_id", # Hardcode client_id if any
+    # client_secret_value = "client_secret" # Hardcode client_secret if any
 )
 ws_client = WorkspaceClient(
     host=cfg.get("host"),
@@ -230,7 +230,7 @@ mcp_agent = create_agent(
 
 # COMMAND ----------
 
-# # 42 sec when using MultiServerMCPClient vs 1.88 min databricks-mcp
+# 42 sec when using MultiServerMCPClient vs 1.88 min databricks-mcp
 # input_example = {
 #     "messages": [
 #         {
@@ -274,7 +274,10 @@ workflow = create_supervisor(
 
 # COMMAND ----------
 
-#qstring = "Show the aspirin molecule. First get its CID, then get the PubChem image URL based on the CID."
+qstring = "Show the aspirin molecule. First get its CID, then get the PubChem image URL based on the CID."
+
+# COMMAND ----------
+
 #workflow.compile().invoke({"messages": [{"role": "user", "content": qstring}]})
 
 # COMMAND ----------
