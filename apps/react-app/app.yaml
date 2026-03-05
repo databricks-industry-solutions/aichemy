@@ -1,6 +1,6 @@
 command:
   - python
-  - server/server.py
+  - server/web_server.py
 env:
   - name: SERVING_ENDPOINT
     value: aichemy
