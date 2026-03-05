@@ -18,11 +18,6 @@ import nest_asyncio
 
 import yaml
 
-# Make src/ importable (project structure: apps/app/ → apps/ → project_root/)
-_app_root = Path(__file__).resolve().parent.parent
-_project_root = _app_root.parent.parent
-sys.path.insert(0, str(_project_root))
-
 from mlflow.genai.agent_server import invoke, stream
 from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse, ResponsesAgentStreamEvent  # noqa: F401
 
@@ -34,7 +29,7 @@ nest_asyncio.apply()
 # Config
 # ---------------------------------------------------------------------------
 
-with open(_project_root / "notebooks" / "config.yml") as _f:
+with open("config.yml") as _f:
     _cfg = yaml.safe_load(_f)
 
 # ---------------------------------------------------------------------------
@@ -60,7 +55,7 @@ def _build_agent():
     from langchain.tools import tool
     from langgraph_supervisor import create_supervisor
 
-    from src.responses_agent_new import WrappedAgent
+    from src.responses_agent import WrappedAgent
     from src.utils import get_SP_credentials
 
     client_id, client_secret = get_SP_credentials(
