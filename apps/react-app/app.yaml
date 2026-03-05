@@ -1,9 +1,8 @@
 command:
-  - python
-  - server/web_server.py
+  - uv
+  - run
+  - start.py
 env:
-  - name: SERVING_ENDPOINT
-    value: aichemy
   - name: SP_CLIENT_ID
     valueFrom: secret
   - name: SP_CLIENT_SECRET
