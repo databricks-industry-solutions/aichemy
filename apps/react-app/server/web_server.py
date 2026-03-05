@@ -25,10 +25,11 @@ from typing import List, Optional, Union
 from databricks.sdk import WorkspaceClient
 import sys
 
-from agent.utils import get_SP_credentials
-
 _app_root = Path(__file__).resolve().parent.parent
 _project_root = _app_root.parent.parent
+sys.path.insert(0, str(_app_root))
+
+from agent.utils import get_SP_credentials
 
 # ---------------------------------------------------------------------------
 # Database layer – auto-connects to Lakebase if Databricks auth is available,
@@ -1146,7 +1147,7 @@ async def debug_lakebase(request: Request):
 # Must be mounted LAST so /api routes take priority.
 # ---------------------------------------------------------------------------
 
-_dist_dir = "dist"
+_dist_dir = _app_root / "dist"
 
 if _dist_dir.exists():
     app.mount("/assets", StaticFiles(directory=_dist_dir / "assets"), name="static-assets")

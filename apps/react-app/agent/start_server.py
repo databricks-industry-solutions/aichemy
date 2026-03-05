@@ -11,6 +11,11 @@ Usage:
     python start_server.py --port 8080 --workers 2
 """
 
+from pathlib import Path
+import sys
+
+_app_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_app_root))
 # Import the module that registers @invoke and @stream (agent/agent.py)
 try:
     import agent.agent  # noqa: F401

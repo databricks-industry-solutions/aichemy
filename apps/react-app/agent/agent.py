@@ -10,10 +10,11 @@ Requests wait on a threading.Event until the agent is ready.
 
 import asyncio
 import logging
+import os
 import sys
 import threading
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 import nest_asyncio
 
 import yaml
@@ -25,11 +26,14 @@ logger = logging.getLogger(__name__)
 
 nest_asyncio.apply()
 
+_app_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_app_root))
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
 
-with open("config.yml") as _f:
+with open(_app_root / "config.yml") as _f:
     _cfg = yaml.safe_load(_f)
 
 # ---------------------------------------------------------------------------
@@ -38,6 +42,8 @@ with open("config.yml") as _f:
 
 _agent = None
 _agent_ready = threading.Event()
+_agent_build_error: Optional[str] = None
+
 
 def _build_agent():
     """Instantiate the full multi-agent supervisor workflow and return a WrappedAgent."""
@@ -55,8 +61,8 @@ def _build_agent():
     from langchain.tools import tool
     from langgraph_supervisor import create_supervisor
 
-    from src.responses_agent import WrappedAgent
-    from src.utils import get_SP_credentials
+    from agent.responses_agent import WrappedAgent
+    from agent.utils import get_SP_credentials
 
     client_id, client_secret = get_SP_credentials(
         scope='aichemy',
@@ -201,12 +207,13 @@ achievable steps based on the agentic tools that you have access to.
 
 
 def _load_agent_background():
-    global _agent
+    global _agent, _agent_build_error
     try:
         logger.info("Building agent...")
         _agent = _build_agent()
         logger.info("Agent ready.")
-    except Exception:
+    except Exception as exc:
+        _agent_build_error = f"{type(exc).__name__}: {exc}"
         logger.exception("Failed to build agent")
     finally:
         _agent_ready.set()
@@ -227,7 +234,10 @@ async def _wait_for_agent() -> None:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, _agent_ready.wait, 300)
     if _agent is None:
-        raise RuntimeError("Agent failed to initialize. Check logs for details.")
+        msg = "Agent failed to initialize. Check logs for details."
+        if _agent_build_error:
+            msg += f" Cause: {_agent_build_error}"
+        raise RuntimeError(msg)
 
 
 @invoke()
