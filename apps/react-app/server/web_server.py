@@ -2,6 +2,9 @@
 Backend proxy server for AiChemy React app.
 Handles Databricks authentication, proxies requests to the agent endpoint,
 and provides project persistence via SQLite (local dev) or Lakebase Postgres (production).
+
+The agent endpoint (POST /invocations on port 8080) is served by agent/start_server.py
+(MLflow AgentServer). Run it separately, e.g. from the app root: python agent/start_server.py --port 8080
 """
 import os
 import re
@@ -14,12 +17,19 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Union
 from databricks.sdk import WorkspaceClient
+import sys
+
+_app_root = Path(__file__).resolve().parent.parent
+_project_root = _app_root.parent.parent
+sys.path.insert(0, str(_project_root))
+
+from src.utils import get_SP_credentials
 
 # ---------------------------------------------------------------------------
 # Database layer – auto-connects to Lakebase if Databricks auth is available,
@@ -49,6 +59,7 @@ class ProjectDB:
         self._lakebase_token: Optional[str] = None
         self._lakebase_user: Optional[str] = None
         self._sp_client: Optional[WorkspaceClient] = None
+        self._host: Optional[str] = None
 
     def init(self):
         """Initialize DB — call after WorkspaceClient is available."""
@@ -93,7 +104,7 @@ class ProjectDB:
                 f"/branches/{self._lakebase_branch_id}"
                 f"/endpoints/{self._lakebase_endpoint_id}"
             )
-            host = cfg.get("host")
+            self._host = cfg.get("host")
 
             # 2. Get SP credentials: env vars (Databricks Apps) > secrets API (local dev)
             sp_client_id = os.getenv("SP_CLIENT_ID")
@@ -102,20 +113,28 @@ class ProjectDB:
             if sp_client_id and sp_client_secret:
                 print("[ProjectDB] SP credentials from environment variables")
             else:
-                from base64 import b64decode
-                w = _get_workspace_client()
-                sp_id_b64 = w.secrets.get_secret("aichemy", "client_id").value
-                sp_secret_b64 = w.secrets.get_secret("aichemy", "client_secret").value
-                sp_client_id = b64decode(sp_id_b64).decode("utf-8")
-                sp_client_secret = b64decode(sp_secret_b64).decode("utf-8")
-                print("[ProjectDB] SP credentials from secrets API")
+                try:
+                    sp_client_id, sp_client_secret = get_SP_credentials(
+                        scope="aichemy",
+                        client_id_key="client_id",
+                        client_secret_key="client_secret",
+                    )
+                    print("[ProjectDB] SP credentials from secrets API")
+                except Exception as e:
+                    print(f"[ProjectDB] No SP credentials (env unset, secrets failed: {e}). Skipping Lakebase.")
+                    return False
+
+            if not (sp_client_id and sp_client_secret):
+                print("[ProjectDB] SP credentials missing. Skipping Lakebase.")
+                return False
 
             # 3. Create SP-authenticated client
             sp_client = WorkspaceClient(
-                host=host,
+                host=self._host,
                 client_id=sp_client_id,
                 client_secret=sp_client_secret,
             )
+            print(f"[ProjectDB] SP client: {sp_client}")
 
             # 4. Resolve endpoint host via Lakebase Autoscaling API
             endpoint = sp_client.postgres.get_endpoint(name=self._lakebase_endpoint_name)
@@ -126,7 +145,8 @@ class ProjectDB:
             cred = sp_client.postgres.generate_database_credential(
                 endpoint=self._lakebase_endpoint_name,
             )
-            self._lakebase_token = cred.token
+            #self._lakebase_token = cred.token
+            self._lakebase_token = "***REDACTED***"
 
             # Cache the SP client for token refresh
             self._sp_client = sp_client
@@ -375,7 +395,7 @@ app = FastAPI(title="AiChemy API Proxy")
 # CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:8080", "http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -408,7 +428,9 @@ DATABRICKS_HOST = _resolve_databricks_host()
 
 def _get_workspace_client() -> WorkspaceClient:
     global _workspace_client
-    if _workspace_client is None:
+    try:
+        _workspace_client = db._sp_client
+    except Exception as e:
         kwargs = {}
         if DATABRICKS_HOST:
             kwargs["host"] = DATABRICKS_HOST
@@ -504,6 +526,11 @@ class UpdateProjectRequest(BaseModel):
 # Agent proxy endpoint
 # Set MOCK_AGENT=1 to return a canned response (for local dev without Databricks auth)
 # ---------------------------------------------------------------------------
+# Agent server: agent/start_server.py (MLflow AgentServer) listens on 8080 /invocations.
+# This backend proxies /api/agent and /api/agent/stream to that endpoint.
+# ---------------------------------------------------------------------------
+# Entry point for the MLflow agent (run with: python agent/start_server.py --port 8080)
+AGENT_URL = "http://127.0.0.1:8080/invocations"
 
 MOCK_AGENT = os.getenv("MOCK_AGENT", "0") == "1"
 
@@ -537,13 +564,15 @@ async def call_agent(request: AgentRequest):
             "custom_inputs": {"thread_id": request.custom_inputs.thread_id},
             "databricks_options": {"return_trace": True},
         }
+        print(f"Input_dict: {input_dict}")
 
-        endpoint = os.getenv("SERVING_ENDPOINT", "aichemy")
+        #endpoint = os.getenv("SERVING_ENDPOINT", "aichemy")
         w = _get_workspace_client()
 
         # Get the workspace host and build the URL
-        host = w.config.host.rstrip('/')
-        url = f"{host}/serving-endpoints/{endpoint}/invocations"
+        #host = w.config.host.rstrip('/')
+        #url = f"{host}/serving-endpoints/{endpoint}/invocations"
+        url = AGENT_URL
 
         # Get authentication headers from the SDK
         headers = w.config.authenticate()
@@ -628,10 +657,11 @@ async def call_agent_stream(request: AgentRequest):
                 "databricks_options": {"return_trace": True},
             }
 
-            endpoint = os.getenv("SERVING_ENDPOINT", "aichemy")
+            # endpoint = os.getenv("SERVING_ENDPOINT", "aichemy")
             w = _get_workspace_client()
-            host = w.config.host.rstrip('/')
-            url = f"{host}/serving-endpoints/{endpoint}/invocations"
+            # host = w.config.host.rstrip('/')
+            # url = f"{host}/serving-endpoints/{endpoint}/invocations"
+            url = AGENT_URL
             headers = w.config.authenticate()
             headers["Content-Type"] = "application/json"
 
@@ -1117,7 +1147,8 @@ async def debug_lakebase(request: Request):
 # Must be mounted LAST so /api routes take priority.
 # ---------------------------------------------------------------------------
 
-_dist_dir = Path(__file__).resolve().parent.parent / "dist"
+_dist_dir = _app_root / "dist"
+
 if _dist_dir.exists():
     app.mount("/assets", StaticFiles(directory=_dist_dir / "assets"), name="static-assets")
 
@@ -1128,8 +1159,19 @@ if _dist_dir.exists():
         if full_path and file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
         return FileResponse(_dist_dir / "index.html")
+else:
+    # No dist/ — e.g. backend-only or frontend not built yet. Avoid 404 on /
+    @app.get("/")
+    async def root_no_dist():
+        return HTMLResponse(
+            "<!DOCTYPE html><html><head><title>AiChemy</title></head><body>"
+            "<h1>AiChemy backend</h1><p>React frontend not built. "
+            "Run <code>npm run build</code> in the app directory, or use the API:</p>"
+            "<ul><li><a href='/api/health'>/api/health</a></li>"
+            "<li><a href='/api/projects'>/api/projects</a></li></ul></body></html>"
+        )
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("DATABRICKS_APP_PORT", "8000"))
+    port = int(os.getenv("DATABRICKS_APP_PORT", "8010"))
     uvicorn.run(app, host="0.0.0.0", port=port)
