@@ -1,10 +1,10 @@
 command:
   - uv
   - run
-  - agent/start_server.py
-  - --port
-  - 8000
+  - start.py
 env:
+  - name: AGENT_PORT
+    value: 8080
   - name: SP_CLIENT_ID
     valueFrom: secret
   - name: SP_CLIENT_SECRET

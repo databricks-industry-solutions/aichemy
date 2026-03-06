@@ -3,8 +3,8 @@ Backend proxy server for AiChemy React app.
 Handles Databricks authentication, proxies requests to the agent endpoint,
 and provides project persistence via SQLite (local dev) or Lakebase Postgres (production).
 
-The agent endpoint (POST /invocations on port 8080) is served by agent/start_server.py
-(MLflow AgentServer). Run it separately, e.g. from the app root: python agent/start_server.py --port 8080
+The agent endpoint (POST /invocations) is served by agent/start_server.py (MLflow AgentServer).
+Port is set via AGENT_PORT (default 8080). Run separately: python agent/start_server.py --port <AGENT_PORT>
 """
 import os
 import re
@@ -515,8 +515,11 @@ class UpdateProjectRequest(BaseModel):
 # Agent server: agent/start_server.py (MLflow AgentServer) listens on 8080 /invocations.
 # This backend proxies /api/agent and /api/agent/stream to that endpoint.
 # ---------------------------------------------------------------------------
-# Entry point for the MLflow agent (run with: python agent/start_server.py --port 8080)
-AGENT_URL = "http://127.0.0.1:8080/invocations"
+# Entry point for the MLflow agent (run with: python agent/start_server.py --port <AGENT_PORT>)
+AGENT_PORT = os.getenv("AGENT_PORT", "8080")
+AGENT_URL = f"http://0.0.0.0:{AGENT_PORT}/invocations"
+# Timeout for web server -> agent requests (seconds). Prevents indefinite hang and generic "network error".
+AGENT_REQUEST_TIMEOUT = int(os.getenv("AGENT_REQUEST_TIMEOUT", "300"))
 
 MOCK_AGENT = os.getenv("MOCK_AGENT", "0") == "1"
 
@@ -564,8 +567,10 @@ async def call_agent(request: AgentRequest):
         headers = w.config.authenticate()
         headers["Content-Type"] = "application/json"
 
-        # Make the request
-        response = requests.post(url=url, headers=headers, json=input_dict)
+        # Make the request (explicit timeout to avoid indefinite hang / "network error")
+        response = requests.post(
+            url=url, headers=headers, json=input_dict, timeout=AGENT_REQUEST_TIMEOUT
+        )
 
         if response.status_code != 200:
             raise HTTPException(
@@ -593,6 +598,11 @@ async def call_agent(request: AgentRequest):
         }
     except HTTPException:
         raise
+    except requests.exceptions.Timeout:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Agent request timed out after {AGENT_REQUEST_TIMEOUT}s. The agent may be busy or slow; try again or increase AGENT_REQUEST_TIMEOUT.",
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -653,7 +663,16 @@ async def call_agent_stream(request: AgentRequest):
 
             yield _sse({"type": "status", "content": "Waiting for agent..."})
 
-            resp = requests.post(url=url, headers=headers, json=input_dict)
+            try:
+                resp = requests.post(
+                    url=url, headers=headers, json=input_dict, timeout=AGENT_REQUEST_TIMEOUT
+                )
+            except requests.exceptions.Timeout:
+                yield _sse({
+                    "type": "error",
+                    "content": f"Agent request timed out after {AGENT_REQUEST_TIMEOUT}s. Try again or increase AGENT_REQUEST_TIMEOUT.",
+                })
+                return
 
             if resp.status_code != 200:
                 yield _sse({"type": "error", "content": f"{resp.status_code}: {resp.text[:500]}"})

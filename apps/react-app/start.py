@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run agent server (port 8080) and web server (port 8010) from the app root.
+Run agent server and web server from the app root. Agent port: AGENT_PORT (default 8080).
 Agent runs in the background; web server runs in the foreground. Ctrl+C stops both.
 
 Usage:
@@ -51,9 +51,10 @@ def main():
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
 
-    print("Starting agent server on port 8080...")
+    agent_port = os.environ.get("AGENT_PORT", "8080")
+    print(f"Starting agent server on port {agent_port}...")
     agent_proc = subprocess.Popen(
-        [sys.executable, "agent/start_server.py", "--port", "8080"],
+        [sys.executable, "agent/start_server.py", "--port", agent_port],
         cwd=APP_ROOT,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
