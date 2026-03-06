@@ -66,8 +66,8 @@ def main():
 
     time.sleep(2)
     if agent_proc.poll() is not None:
-        _, err = agent_proc.communicate()
-        print("Agent failed to start:", err.decode() if err else "unknown", file=sys.stderr)
+        agent_proc.wait()  # Reap process; stderr was already teed via [agent] prefix
+        print("Agent failed to start (see [agent] output above).", file=sys.stderr)
         sys.exit(1)
 
     print("Starting web server...")
