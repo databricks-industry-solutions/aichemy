@@ -1,48 +1,34 @@
 """
 MLflow AgentServer entry point.
-
-Runs a FastAPI server on port 8080 (Databricks Apps standard port) that:
-  - Serves the LangGraph agent at POST /invocations
-  - Proxies all other requests (UI) to Streamlit running on CHAT_APP_PORT (default 3000)
-  - Exposes GET /health for readiness checks
-
-Usage:
-    python start_server.py --port 8080
-    python start_server.py --port 8080 --workers 2
+Serves the agent at POST /invocations, GET /health; proxies UI to Streamlit.
 """
-
 from pathlib import Path
 import sys
 
 _app_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_app_root))
-# Import the module that registers @invoke and @stream (agent/agent.py)
-try:
-    import agent.agent  # noqa: F401
-except ImportError:
-    import agent as _agent_pkg  # noqa: F401 — fallback if agent is a single module
 
 from mlflow.genai.agent_server import AgentServer
 
-# MLflow reads MLFLOW_EXPERIMENT_ID automatically — set it in app.yaml
-agent_server = AgentServer("ResponsesAgent", enable_chat_proxy=True)
+# Import agent to register @invoke / @stream with the server
+try:
+    import agent.agent  # noqa: F401
+except ImportError:
+    import agent as _agent_pkg  # noqa: F401
 
-# Expose the ASGI app for uvicorn import-string mode (required for --workers > 1)
+agent_server = AgentServer("ResponsesAgent", enable_chat_proxy=True)
 app = agent_server.app
 
 
 def main():
-    # Force default event loop policy and ensure main thread has a loop.
-    # Required when run as a subprocess (e.g. Databricks Apps): uvloop replaces
-    # the policy and then get_event_loop() raises "no current event loop";
-    # using DefaultEventLoopPolicy avoids uvloop and fixes nest_asyncio/uvicorn.
-    import asyncio
-    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
-    try:
-        asyncio.get_event_loop()
-    except RuntimeError:
-        asyncio.set_event_loop(asyncio.new_event_loop())
-    # Passes --port / --workers / --reload through to uvicorn via argparse
+    # Required when run as subprocess (e.g. Databricks Apps): avoid uvloop
+    # "no current event loop" by using default policy and ensuring a loop exists.
+    # import asyncio
+    # asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+    # try:
+    #     asyncio.get_event_loop()
+    # except RuntimeError:
+    #     asyncio.set_event_loop(asyncio.new_event_loop())
     agent_server.run(app_import_string="start_server:app")
 
 
