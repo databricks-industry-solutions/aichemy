@@ -21,14 +21,14 @@ app = agent_server.app
 
 
 def main():
-    # Required when run as subprocess (e.g. Databricks Apps): avoid uvloop
-    # "no current event loop" by using default policy and ensuring a loop exists.
-    # import asyncio
-    # asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
-    # try:
-    #     asyncio.get_event_loop()
-    # except RuntimeError:
-    #     asyncio.set_event_loop(asyncio.new_event_loop())
+    # Required when run on Databricks Apps (or as subprocess): nest_asyncio + uvloop
+    # would raise "no current event loop". Use default policy and ensure a loop.
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
     agent_server.run(app_import_string="start_server:app")
 
 

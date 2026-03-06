@@ -15,16 +15,11 @@ import sys
 import threading
 from pathlib import Path
 from typing import AsyncGenerator, Optional
-import nest_asyncio
-
 import yaml
-
 from mlflow.genai.agent_server import invoke, stream
 from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse, ResponsesAgentStreamEvent  # noqa: F401
 
 logger = logging.getLogger(__name__)
-
-nest_asyncio.apply()
 
 _app_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_app_root))
@@ -47,9 +42,8 @@ _agent_build_error: Optional[str] = None
 
 def _build_agent():
     """Instantiate the full multi-agent supervisor workflow and return a WrappedAgent."""
-    import nest_asyncio
-
-    nest_asyncio.apply()
+    # import nest_asyncio
+    # nest_asyncio.apply()
 
     from databricks.sdk import WorkspaceClient
     from databricks_langchain import ChatDatabricks, DatabricksEmbeddings
@@ -155,31 +149,31 @@ def _build_agent():
     #     def load_tools(self):
     #         return asyncio.run(self.get_tools())
 
-    # def get_tools(mcp_client: DatabricksMultiServerMCPClient):
-    #     async def aget_tools():
-    #         return await mcp_client.get_tools()
-    #     return asyncio.run(aget_tools())
+    def get_tools(mcp_client: DatabricksMultiServerMCPClient):
+        async def aget_tools():
+            return await mcp_client.get_tools()
+        return asyncio.run(aget_tools())
 
-    # mcp_client = DatabricksMultiServerMCPClient(servers)
-    # try:
-    #     # mcp_tools = _McpClient(servers).load_tools()
-    #     mcp_tools = get_tools(mcp_client)
-    #     logger.info("MCP tools loaded: %d tools", len(mcp_tools))
-    # except Exception as exc:
-    #     logger.warning("MCP tool loading failed (%s) — building mcp_agent with no tools.", exc)
-    #     mcp_tools = []
-    # mcp_prompt = """You are a multi-MCP server agent connected to:
-    # 1. PubChem MCP server that provides everything about chemical compounds
-    # 2. PubMed MCP server that searches biomedical literature and retrieves free full text if any. 
-    # 3. OpenTargets MCP server that provides everything about drug targets and their associations with diseases and drugs.
-    # Most PubChem tools (e.g. get_compound_info) except for search_compounds expect a CID."""
-    # mcp_agent = create_agent(
-    #     llm, tools=mcp_tools, system_prompt=mcp_prompt, name="mcp"
-    # )
+    mcp_client = DatabricksMultiServerMCPClient(servers)
+    try:
+        # mcp_tools = _McpClient(servers).load_tools()
+        mcp_tools = get_tools(mcp_client)
+        logger.info("MCP tools loaded: %d tools", len(mcp_tools))
+    except Exception as exc:
+        logger.warning("MCP tool loading failed (%s) — building mcp_agent with no tools.", exc)
+        mcp_tools = []
+    mcp_prompt = """You are a multi-MCP server agent connected to:
+    1. PubChem MCP server that provides everything about chemical compounds
+    2. PubMed MCP server that searches biomedical literature and retrieves free full text if any. 
+    3. OpenTargets MCP server that provides everything about drug targets and their associations with diseases and drugs.
+    Most PubChem tools (e.g. get_compound_info) except for search_compounds expect a CID."""
+    mcp_agent = create_agent(
+        llm, tools=mcp_tools, system_prompt=mcp_prompt, name="mcp"
+    )
 
     # --- Supervisor ---
     workflow = create_supervisor(
-        [drugbank_agent, zinc_agent, util_agent],
+        [drugbank_agent, zinc_agent, util_agent, mcp_agent],
         model=llm,
         prompt="""You are a supervisor managing 4 agents. Route according to the agent required to fulfill the request.
 1. Drugbank agent: generates text-to-SQL queries to Drugbank of FDA-approved drugs and their properties
