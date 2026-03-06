@@ -32,15 +32,16 @@ app = agent_server.app
 
 
 def main():
-    # Ensure main thread has an event loop before uvicorn runs (required when
-    # started as a subprocess on Databricks Apps; otherwise uvloop/nest_asyncio
-    # raise "There is no current event loop in thread 'MainThread'").
+    # Force default event loop policy and ensure main thread has a loop.
+    # Required when run as a subprocess (e.g. Databricks Apps): uvloop replaces
+    # the policy and then get_event_loop() raises "no current event loop";
+    # using DefaultEventLoopPolicy avoids uvloop and fixes nest_asyncio/uvicorn.
     import asyncio
+    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
     try:
         asyncio.get_event_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
-        
     # Passes --port / --workers / --reload through to uvicorn via argparse
     agent_server.run(app_import_string="start_server:app")
 
