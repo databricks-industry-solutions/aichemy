@@ -11,10 +11,21 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parent
+
+
+def _tee_stderr(pipe, prefix: str):
+    """Read lines from pipe and print with prefix so agent logs are visible."""
+    try:
+        for line in iter(pipe.readline, ""):
+            if line:
+                print(f"{prefix}{line.rstrip()}", flush=True)
+    finally:
+        pipe.close()
 
 
 def main():
@@ -46,7 +57,11 @@ def main():
         cwd=APP_ROOT,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
+        text=True,
     )
+    # Show agent stderr in this terminal (e.g. "Failed to build agent" + traceback)
+    t = threading.Thread(target=_tee_stderr, args=(agent_proc.stderr, "[agent] "), daemon=True)
+    t.start()
     print(f"Agent started (PID: {agent_proc.pid})")
 
     time.sleep(2)

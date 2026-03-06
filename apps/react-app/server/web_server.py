@@ -25,10 +25,11 @@ from typing import List, Optional, Union
 from databricks.sdk import WorkspaceClient
 import sys
 
-from agent.utils import get_SP_credentials
-
 _app_root = Path(__file__).resolve().parent.parent
 _project_root = _app_root.parent.parent
+sys.path.insert(0, str(_app_root))
+
+from agent.utils import get_secret
 
 # ---------------------------------------------------------------------------
 # Database layer – auto-connects to Lakebase if Databricks auth is available,
@@ -106,25 +107,11 @@ class ProjectDB:
             self._host = cfg.get("host")
 
             # 2. Get SP credentials: env vars (Databricks Apps) > secrets API (local dev)
-            sp_client_id = os.getenv("SP_CLIENT_ID")
-            sp_client_secret = os.getenv("SP_CLIENT_SECRET")
-
-            if sp_client_id and sp_client_secret:
-                print("[ProjectDB] SP credentials from environment variables")
-            else:
-                try:
-                    sp_client_id, sp_client_secret = get_SP_credentials(
-                        scope="aichemy",
-                        client_id_key="client_id",
-                        client_secret_key="client_secret",
-                    )
-                    print("[ProjectDB] SP credentials from secrets API")
-                except Exception as e:
-                    print(f"[ProjectDB] No SP credentials (env unset, secrets failed: {e}). Skipping Lakebase.")
-                    return False
+            sp_client_id = get_secret(scope='aichemy', key='client_id')
+            sp_client_secret = get_secret(scope='aichemy', key='client_secret')
 
             if not (sp_client_id and sp_client_secret):
-                print("[ProjectDB] SP credentials missing. Skipping Lakebase.")
+                print("[ProjectDB] SP credentials missing from Databricks secrets. Skipping Lakebase.")
                 return False
 
             # 3. Create SP-authenticated client
@@ -135,6 +122,9 @@ class ProjectDB:
             )
             print(f"[ProjectDB] SP client: {sp_client}")
 
+            # Cache the SP client for token refresh
+            self._sp_client = sp_client
+
             # 4. Resolve endpoint host via Lakebase Autoscaling API
             endpoint = sp_client.postgres.get_endpoint(name=self._lakebase_endpoint_name)
             self._lakebase_host = endpoint.status.hosts.host
@@ -144,11 +134,8 @@ class ProjectDB:
             cred = sp_client.postgres.generate_database_credential(
                 endpoint=self._lakebase_endpoint_name,
             )
-            #self._lakebase_token = cred.token
-            self._lakebase_token = "***REDACTED***"
-
-            # Cache the SP client for token refresh
-            self._sp_client = sp_client
+            # self._lakebase_token = cred.token
+            self._lakebase_token = get_secret(scope='aichemy', key='lakebase_as')
 
             # 6. Test the connection (retry for scale-to-zero wake-up)
             import psycopg
@@ -1146,7 +1133,7 @@ async def debug_lakebase(request: Request):
 # Must be mounted LAST so /api routes take priority.
 # ---------------------------------------------------------------------------
 
-_dist_dir = "dist"
+_dist_dir = _app_root / "dist"
 
 if _dist_dir.exists():
     app.mount("/assets", StaticFiles(directory=_dist_dir / "assets"), name="static-assets")
