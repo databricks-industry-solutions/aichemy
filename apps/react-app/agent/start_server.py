@@ -40,6 +40,7 @@ def main():
         asyncio.get_event_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
+        
     # Passes --port / --workers / --reload through to uvicorn via argparse
     agent_server.run(app_import_string="start_server:app")
 
