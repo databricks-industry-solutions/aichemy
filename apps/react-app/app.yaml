@@ -7,5 +7,3 @@ env:
     valueFrom: secret
   - name: SP_CLIENT_SECRET
     valueFrom: secret-2
-  - name: DATABRICKS_APP_PORT
-    value: 8010
