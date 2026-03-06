@@ -1,9 +1,7 @@
 command:
   - uv
   - run
-  - agent/start_server.py
-  - --port
-  - 8000
+  - start.py
 env:
   - name: SP_CLIENT_ID
     valueFrom: secret
