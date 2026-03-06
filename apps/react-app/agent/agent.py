@@ -62,13 +62,11 @@ def _build_agent():
     from langgraph_supervisor import create_supervisor
 
     from agent.responses_agent import WrappedAgent
-    from agent.utils import get_SP_credentials
+    from agent.utils import get_secret
 
-    client_id, client_secret = get_SP_credentials(
-        scope='aichemy',
-        client_id_key='client_id', #if retrieving secrets (but doesn't work with mlflow logging)
-        client_secret_key='client_secret', #if retrieving secrets (but doesn't work with mlflow logging)
-    )
+    
+    client_id = get_secret(scope='aichemy', key='client_id')
+    client_secret = get_secret(scope='aichemy', key='client_secret')
     ws_client = WorkspaceClient(
         host=_cfg["host"],
         client_id=client_id,
@@ -157,31 +155,31 @@ def _build_agent():
     #     def load_tools(self):
     #         return asyncio.run(self.get_tools())
 
-    def get_tools(mcp_client: DatabricksMultiServerMCPClient):
-        async def aget_tools():
-            return await mcp_client.get_tools()
-        return asyncio.run(aget_tools())
+    # def get_tools(mcp_client: DatabricksMultiServerMCPClient):
+    #     async def aget_tools():
+    #         return await mcp_client.get_tools()
+    #     return asyncio.run(aget_tools())
 
-    mcp_client = DatabricksMultiServerMCPClient(servers)
-    try:
-        # mcp_tools = _McpClient(servers).load_tools()
-        mcp_tools = get_tools(mcp_client)
-        logger.info("MCP tools loaded: %d tools", len(mcp_tools))
-    except Exception as exc:
-        logger.warning("MCP tool loading failed (%s) — building mcp_agent with no tools.", exc)
-        mcp_tools = []
-    mcp_prompt = """You are a multi-MCP server agent connected to:
-    1. PubChem MCP server that provides everything about chemical compounds
-    2. PubMed MCP server that searches biomedical literature and retrieves free full text if any. 
-    3. OpenTargets MCP server that provides everything about drug targets and their associations with diseases and drugs.
-    Most PubChem tools (e.g. get_compound_info) except for search_compounds expect a CID."""
-    mcp_agent = create_agent(
-        llm, tools=mcp_tools, system_prompt=mcp_prompt, name="mcp"
-    )
+    # mcp_client = DatabricksMultiServerMCPClient(servers)
+    # try:
+    #     # mcp_tools = _McpClient(servers).load_tools()
+    #     mcp_tools = get_tools(mcp_client)
+    #     logger.info("MCP tools loaded: %d tools", len(mcp_tools))
+    # except Exception as exc:
+    #     logger.warning("MCP tool loading failed (%s) — building mcp_agent with no tools.", exc)
+    #     mcp_tools = []
+    # mcp_prompt = """You are a multi-MCP server agent connected to:
+    # 1. PubChem MCP server that provides everything about chemical compounds
+    # 2. PubMed MCP server that searches biomedical literature and retrieves free full text if any. 
+    # 3. OpenTargets MCP server that provides everything about drug targets and their associations with diseases and drugs.
+    # Most PubChem tools (e.g. get_compound_info) except for search_compounds expect a CID."""
+    # mcp_agent = create_agent(
+    #     llm, tools=mcp_tools, system_prompt=mcp_prompt, name="mcp"
+    # )
 
     # --- Supervisor ---
     workflow = create_supervisor(
-        [drugbank_agent, zinc_agent, util_agent, mcp_agent],
+        [drugbank_agent, zinc_agent, util_agent],
         model=llm,
         prompt="""You are a supervisor managing 4 agents. Route according to the agent required to fulfill the request.
 1. Drugbank agent: generates text-to-SQL queries to Drugbank of FDA-approved drugs and their properties
