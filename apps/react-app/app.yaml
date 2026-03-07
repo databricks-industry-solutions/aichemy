@@ -5,6 +5,8 @@ command:
 env:
   - name: AGENT_PORT
     value: 8080
+  - name: AGENT_REQUEST_TIMEOUT
+    value: 300
   - name: SP_CLIENT_ID
     valueFrom: secret
   - name: SP_CLIENT_SECRET
