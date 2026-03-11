@@ -14,6 +14,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 from uuid import uuid4
@@ -52,6 +53,25 @@ _workflow: Optional[StateGraph] = None
 _agent = None
 _agent_ready = threading.Event()
 _agent_build_error: Optional[str] = None
+
+# ---------------------------------------------------------------------------
+# Persistent MCP event loop — keeps MCP sessions alive across queries
+# ---------------------------------------------------------------------------
+_mcp_loop = asyncio.new_event_loop()
+_mcp_client = None
+
+
+def _run_mcp_loop():
+    asyncio.set_event_loop(_mcp_loop)
+    _mcp_loop.run_forever()
+
+
+threading.Thread(target=_run_mcp_loop, daemon=True, name="mcp-loop").start()
+
+
+def _mcp_run(coro, timeout=300):
+    """Schedule a coroutine on the persistent MCP loop and block for the result."""
+    return asyncio.run_coroutine_threadsafe(coro, _mcp_loop).result(timeout=timeout)
 
 
 def _build_agent() -> StateGraph:
@@ -147,19 +167,10 @@ def _build_agent() -> StateGraph:
         ),
     ]
 
-    # class _McpClient(DatabricksMultiServerMCPClient):
-    #     def load_tools(self):
-    #         return asyncio.run(self.get_tools())
-
-    def get_tools(mcp_client: DatabricksMultiServerMCPClient):
-        async def aget_tools():
-            return await mcp_client.get_tools()
-        return asyncio.run(aget_tools())
-
-    mcp_client = DatabricksMultiServerMCPClient(servers)
+    global _mcp_client
+    _mcp_client = DatabricksMultiServerMCPClient(servers)
     try:
-        # mcp_tools = _McpClient(servers).load_tools()
-        mcp_tools = get_tools(mcp_client)
+        mcp_tools = _mcp_run(_mcp_client.get_tools())
         logger.info("MCP tools loaded: %d tools", len(mcp_tools))
     except Exception as exc:
         logger.warning("MCP tool loading failed (%s) — building mcp_agent with no tools.", exc)
@@ -174,31 +185,39 @@ def _build_agent() -> StateGraph:
     )
 
     # --- Supervisor ---
+    supervisor_prompt = (
+        "You are a supervisor managing 4 agents. Route to the agent required to fulfill the request.\n"
+        "1. Drugbank agent: generates text-to-SQL queries to Drugbank of FDA-approved drugs and their properties\n"
+        "2. ZINC agent: searches for drug-like molecules and their properties from the ZINC database "
+        "based on ECFP4 molecular fingerprint embeddings represented as a 1024-char bitstring.\n"
+        "3. Chem utilities agent: display molecule image PNG files from PubChem website by CID in "
+        "markdown or compute ECFP4 molecular fingerprint embeddings in a 1024-char bitstring for a "
+        "given SMILES structure. If missing SMILES input, query it from a chemical name using the "
+        "PubChem MCP agent's search_compound tool.\n"
+        "4. MCP agent: connects to the PubChem, PubMed and OpenTargets MCP servers\n\n"
+        "Because you are an autonomous multi-agent system, do not ask for more follow up information. "
+        "Instead, use chain-of-thought to reason and break down the request into achievable steps "
+        "based on the agentic tools that you have access to.\n\n"
+        "CRITICAL RULES — FOLLOW EXACTLY:\n"
+        "1. PASS THROUGH RESULTS: When a sub-agent returns data (tables, query results, search results), "
+        "that IS the final answer. Tables and structured data do NOT need summarisation. "
+        "NEVER fabricate, extend, or add rows/data that were not in the sub-agent's output.\n"
+        "2. ONE CALL PER AGENT PER STEP: NEVER route to the same agent twice for the same sub-task. "
+        "Once an agent returns a result, that result is COMPLETE. Do NOT re-route to the same agent "
+        "to rephrase, summarise, or improve the answer unless another tool is required.\n"
+        "3. TERMINATE IMMEDIATELY: After a sub-agent returns data for a single-step request, "
+        "FINISH your turn. Do NOT hand off to any agent again.\n"
+        "4. For MULTI-STEP requests (e.g. 'find similar molecules to semaglutide'), route to "
+        "DIFFERENT agents in sequence — never the same agent twice."
+    )
     workflow = create_supervisor(
         [drugbank_agent, zinc_agent, util_agent, mcp_agent],
         model=llm,
-        prompt="""You are a supervisor managing 4 agents. Route according to the agent required to fulfill the request.
-1. Drugbank agent: generates text-to-SQL queries to Drugbank of FDA-approved drugs and their properties
-2. ZINC agent: searches for drug-like molecules and their properties from the ZINC database based on ECFP4 molecular fingerprint embeddings represented as a 1024-char bitstring.
-3. Chem utilities agent: display molecule image PNG files from PubChem website by CID in markdown or compute ECFP4 molecular fingerprint embeddings in a 1024-char bitstring for a given SMILES structure. If missing SMILES input, query it from a chemical name using the PubChem MCP agent's search_compound tool.
-4. MCP agent: connects to the PubChem, PubMed and OpenTargets MCP servers
-
-Because you are an autonomous multi-agent system, do not ask for more follow up information. Instead, use chain-of-thought to reason and break down the request into
-achievable steps based on the agentic tools that you have access to.
-
-CRITICAL RULES:
-1. When a sub-agent returns data (tables, query results, search results), pass through the
-   sub-agent's response EXACTLY as-is. NEVER fabricate, extend, or add rows/data that were not
-   in the sub-agent's output. If the result seems incomplete, say so — do NOT invent entries.
-2. NEVER call the same agent twice for the same request. Once an agent returns a result, accept
-   it and move on. Do NOT retry or re-route to the same agent hoping for a different answer.
-3. When you have a complete result from a sub-agent, return it immediately. Do not hand off again.
-""",
+        prompt=supervisor_prompt,
         output_mode="last_message",
         add_handoff_messages=False,
         parallel_tool_calls=True,
     )
-
     return workflow
 
 
@@ -216,13 +235,67 @@ def build_responses_agent(workflow: Optional[StateGraph] = None) -> WrappedAgent
     )
 
 
+_KEEPALIVE_IDLE_SECS = int(os.environ.get("AGENT_KEEPALIVE_SECS", 600))  # 10 min
+_last_activity = time.monotonic()
+_last_activity_lock = threading.Lock()
+
+
+def _touch_activity() -> None:
+    """Record that a real request was just served."""
+    global _last_activity
+    with _last_activity_lock:
+        _last_activity = time.monotonic()
+
+
+def _warmup(agent: "WrappedAgent") -> None:
+    """Send a trivial query to pre-warm LLM endpoint, Lakebase checkpointer, etc."""
+    try:
+        logger.info("Sending warmup query…")
+        warmup_req = ResponsesAgentRequest(
+            input=[{"role": "user", "content": "hello"}],
+            custom_inputs={"thread_id": f"_warmup_{uuid4().hex[:8]}"},
+        )
+        for _ in agent.predict_stream(warmup_req):
+            pass
+        logger.info("Warmup complete.")
+    except Exception as exc:
+        logger.warning("Warmup query failed (non-fatal): %s", exc)
+
+
+def _ping_mcp() -> None:
+    """Send tools/list to each MCP server to keep the sessions on _mcp_loop alive."""
+    if _mcp_client is None:
+        return
+    try:
+        logger.info("Pinging MCP servers…")
+        _mcp_run(_mcp_client.get_tools(), timeout=120)
+        logger.info("MCP ping OK.")
+    except Exception as exc:
+        logger.warning("MCP ping failed (non-fatal): %s", exc)
+
+
+def _keepalive_loop() -> None:
+    """Background loop: keep agent and MCP sessions warm during idle periods."""
+    while True:
+        time.sleep(60)
+        if _agent is None:
+            continue
+        with _last_activity_lock:
+            idle = time.monotonic() - _last_activity
+        if idle >= _KEEPALIVE_IDLE_SECS:
+            _ping_mcp()
+            _warmup(_agent)
+            _touch_activity()
+
+
 def _load_agent_background():
     global _agent, _workflow, _agent_build_error
     try:
-        logger.info("Building agent...")
+        logger.info("Building agent…")
         _workflow = _build_agent()
         _agent = build_responses_agent(_workflow)
         logger.info("Agent ready.")
+        _warmup(_agent)
     except Exception as exc:
         _agent_build_error = f"{type(exc).__name__}: {exc}"
         logger.exception("Failed to build agent")
@@ -232,6 +305,7 @@ def _load_agent_background():
 
 # Start agent construction in background so the server can accept /health checks immediately
 threading.Thread(target=_load_agent_background, daemon=True).start()
+threading.Thread(target=_keepalive_loop, daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -255,16 +329,18 @@ async def _wait_for_agent() -> None:
 async def predict(request: ResponsesAgentRequest) -> ResponsesAgentResponse:
     """Handle agent inference requests via AgentServer /invocations."""
     await _wait_for_agent()
+    _touch_activity()
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _agent.predict, request)
 
 
-# @stream()
+@stream()
 async def predict_stream(
     request: ResponsesAgentRequest,
 ) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
     """Stream via WrappedAgent (Lakebase checkpointer + ResponsesAgent helpers)."""
     await _wait_for_agent()
+    _touch_activity()
     async for event in _agent._predict_stream_async(request):
         yield event
 
@@ -277,7 +353,7 @@ async def predict_stream(
 #   2. Uncomment @stream() on predict_stream_raw below
 
 
-@stream()
+# @stream()
 async def predict_stream_raw(
     request: ResponsesAgentRequest,
 ) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
@@ -296,4 +372,4 @@ async def predict_stream_raw(
 
     async for chunk in _workflow.compile().astream(inputs, config=config):
         print(chunk, flush=True)
-    yield ResponsesAgentStreamEvent(type="response.completed")
+    yield ResponsesAgentStreamEvent(type="response.output_text.done")

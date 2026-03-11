@@ -539,7 +539,10 @@ class UpdateProjectRequest(BaseModel):
 AGENT_PORT = os.getenv("AGENT_PORT", "8080")
 AGENT_URL = f"http://0.0.0.0:{AGENT_PORT}/invocations"
 # Timeout for web server -> agent requests (seconds). Prevents indefinite hang and generic "network error".
-AGENT_REQUEST_TIMEOUT = int(os.getenv("AGENT_REQUEST_TIMEOUT", "300"))
+# Split into (connect, read): short connect timeout, longer read timeout for slow MCP/Genie queries.
+AGENT_CONNECT_TIMEOUT = int(os.getenv("AGENT_CONNECT_TIMEOUT", "30"))
+AGENT_READ_TIMEOUT = int(os.getenv("AGENT_READ_TIMEOUT", "600"))
+AGENT_REQUEST_TIMEOUT = AGENT_CONNECT_TIMEOUT + AGENT_READ_TIMEOUT
 
 
 @app.post("/api/agent/stream")
@@ -592,7 +595,7 @@ async def call_agent_stream(request: AgentRequest):
             except requests.exceptions.Timeout:
                 yield _sse({
                     "type": "error",
-                    "content": f"Agent request timed out after {AGENT_REQUEST_TIMEOUT}s. Try again or increase AGENT_REQUEST_TIMEOUT.",
+                    "content": f"Agent request timed out after {AGENT_READ_TIMEOUT}s. Try again or increase AGENT_READ_TIMEOUT.",
                 })
                 return
 
@@ -643,21 +646,26 @@ async def call_agent_stream(request: AgentRequest):
             if trace_id:
                 print(f"trace_id: {trace_id}")
 
-            # Existing thread: stream only the last item to avoid repeating previous responses
-            last_item = accumulated_output[-1] if accumulated_output else None
-            if not is_new_thread and last_item:
-                yield from stream_new_content(last_item, _sse)
+            # Existing thread: stream only the last message item to avoid repeating previous responses
+            if not is_new_thread and accumulated_output:
+                last_msg = next(
+                    (it for it in reversed(accumulated_output)
+                     if it.get("type") == "message"
+                     and any(b.get("type") == "output_text" for b in it.get("content") or [])),
+                    accumulated_output[-1],
+                )
+                yield from stream_new_content(last_msg, _sse)
 
-            # Emit tool_calls and genie only from the current turn (last item; for new thread that's the only item)
-            output_for_turn = [last_item] if last_item else []
-            synthetic = {"output": output_for_turn}
-            all_tool_calls = extract_all_tool_calls(synthetic)
-            if all_tool_calls:
-                yield _sse({"type": "tool_calls", "data": all_tool_calls})
-            genie_results = parse_genie_results(synthetic)
-            if genie_results:
-                yield _sse({"type": "genie", "data": genie_results})
+            # Parse the trace for tool_calls and genie results
             if trace_id:
+                trace = get_trace(trace_id, retries=3, delay=1.0)
+                if trace:
+                    parsed = parse_trace_for_ui(_serialize_trace(trace))
+                    print(f"parsed: {parsed}")
+                    if parsed["tool_calls"]:
+                        yield _sse({"type": "tool_calls", "data": parsed["tool_calls"]})
+                    if parsed["genie_results"]:
+                        yield _sse({"type": "genie", "data": parsed["genie_results"]})
                 yield _sse({"type": "trace_id", "trace_id": trace_id})
 
         except Exception as e:
@@ -777,28 +785,6 @@ async def delete_project(project_id: str):
 # ---------------------------------------------------------------------------
 # Response parsing helpers (mirrors Streamlit utils.py)
 # ---------------------------------------------------------------------------
-
-def parse_tool_calls(text_content: str) -> list[dict]:
-    """Parse <function_calls> and <thinking> blocks from text content."""
-    tool_calls = []
-    function_calls_blocks = re.findall(
-        r'<function_calls>\s*(.*?)\s*</function_calls>', text_content, re.DOTALL
-    )
-    thinking_blocks = re.findall(
-        r'<thinking>\s*(.*?)\s*</thinking>', text_content, re.DOTALL
-    )
-    for block in function_calls_blocks:
-        invokes = re.findall(r'<invoke name="([^"]+)">\s*(.*?)\s*</invoke>', block, re.DOTALL)
-        for function_name, params_block in invokes:
-            params = re.findall(r'<parameter name="([^"]+)">([^<]*)</parameter>', params_block)
-            parameters = {n: v.strip() for n, v in params}
-            tool_calls.append({"function_name": function_name, "parameters": parameters, "thinking": None})
-    for i, thinking in enumerate(thinking_blocks):
-        if i < len(tool_calls):
-            tool_calls[i]["thinking"] = thinking.strip()
-    return tool_calls
-
-
 def strip_tool_call_tags(text_content: str) -> str:
     """Strip <function_calls>, <thinking>, and <results> tags from text."""
     text_content = re.sub(r'<function_calls>.*?</function_calls>', '', text_content, flags=re.DOTALL)
@@ -810,7 +796,7 @@ def strip_tool_call_tags(text_content: str) -> str:
 
 
 def stream_new_content(item: Optional[dict], _sse):
-    """Yield SSE events for one response item's text (typewriter effect). Skips tool-call tags."""
+    """Yield SSE events for one response item's text in chunks. Skips tool-call tags."""
     import time
     if not item:
         return
@@ -827,25 +813,23 @@ def stream_new_content(item: Optional[dict], _sse):
                         time.sleep(0.02)
 
 
-def parse_genie_results(response_json: dict) -> list[dict]:
-    """Extract poll_query_results from databricks_output trace spans."""
+def parse_genie_results(trace_dict: dict) -> list[dict]:
+    """Extract Genie query results from poll_query_results spans in a serialized trace.
+
+    Accepts the dict returned by _serialize_trace() (spans at top level,
+    outputs already deserialized).
+    """
     results = []
-    try:
-        spans = response_json.get("databricks_output", {}).get("trace", {}).get("data", {}).get("spans", [])
-    except (AttributeError, KeyError):
-        return results
-    for span in spans:
-        if span.get("name") == "poll_query_results":
-            span_outputs = span.get("attributes", {}).get("mlflow.spanOutputs", "{}")
-            try:
-                outputs = json.loads(json.loads(span_outputs))
-                results.append({
-                    "result": outputs.get("result", ""),
-                    "query": outputs.get("query", ""),
-                    "description": outputs.get("description", ""),
-                })
-            except (json.JSONDecodeError, TypeError):
-                continue
+    for span in trace_dict.get("spans", []):
+        if span.get("name") != "poll_query_results":
+            continue
+        outputs = span.get("outputs")
+        if isinstance(outputs, dict) and outputs.get("result"):
+            results.append({
+                "result": outputs.get("result", ""),
+                "query": outputs.get("query", ""),
+                "description": outputs.get("description", ""),
+            })
     return results
 
 
@@ -865,15 +849,52 @@ def extract_text_content(response_json: dict) -> list[str]:
     return [last_text] if last_text else []
 
 
-def extract_all_tool_calls(response_json: dict) -> list[dict]:
-    """Extract tool calls from ALL message outputs (not just the last one)."""
+def extract_all_tool_calls(trace_dict: dict) -> list[dict]:
+    """Extract tool calls from a serialized trace.
+
+    Checks three sources (in order):
+    1. Spans named ``"tools"`` whose ``inputs`` contain a ``tool_call`` dict
+       with ``name`` and ``args`` (OpenAI Responses-style traces).
+    2. Message text in the root span's outputs for ``<function_calls>`` XML
+       blocks (Claude-style traces).
+    3. Direct child spans of the root, treated as function invocations
+       (fallback for other span layouts).
+    """
     all_tool_calls = []
-    for item in response_json.get("output", []):
-        if item.get("type") == "message":
-            text = item.get("content", [{}])[0].get("text")
-            if text:
-                all_tool_calls.extend(parse_tool_calls(text))
+    spans = trace_dict.get("spans", [])
+
+    for span in spans:
+        if span.get("name") == "tools":
+            inputs = span.get("inputs", {})
+            tool_call = inputs.get("tool_call")
+            if isinstance(tool_call, dict):
+                tc_name = tool_call.get("name")
+                try:
+                    results = span.get("outputs").get("messages")[0].get("content")
+                except Exception:
+                    results = None
+                if tool_call.get("args", {})=={} and results is None:
+                    continue
+                else:
+                    all_tool_calls.append({
+                        "function_name": tc_name,
+                        "parameters": tool_call.get("args"),
+                        "results": results
+                    })
     return all_tool_calls
+
+
+def parse_trace_for_ui(trace_dict: dict) -> dict:
+    """Parse a serialized trace for tool_calls and genie_results.
+
+    ``trace_dict`` is the dict returned by ``_serialize_trace()`` (or the
+    ``/api/trace/<id>`` endpoint).  Returns a dict with ``tool_calls`` and
+    ``genie_results`` lists ready for SSE emission.
+    """
+    return {
+        "tool_calls": extract_all_tool_calls(trace_dict),
+        "genie_results": parse_genie_results(trace_dict),
+    }
 
 
 # ---------------------------------------------------------------------------

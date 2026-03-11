@@ -14,10 +14,7 @@ sys.path.insert(0, str(_app_root))
 from agent.utils import init_mlflow
 
 init_mlflow()
-# Disable LangChain autolog: it uses ContextVars that break when the agent runs in
-# a different thread/context than the main thread (request handlers, background agent load).
-# AgentServer already traces requests at the agent level.
-# mlflow.langchain.autolog()
+mlflow.langchain.autolog()
 
 # Import agent to register @invoke / @stream with the server
 try:

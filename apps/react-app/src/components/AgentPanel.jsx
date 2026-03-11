@@ -70,7 +70,7 @@ function ToolCallExpander({ index, toolCall }) {
             </div>
           ))}
           {toolCall.thinking && (
-            <div className="tool-thinking">{toolCall.thinking}</div>
+            <div className="tool-thinking">{toolCall.results}</div>
           )}
         </div>
       )}
@@ -85,7 +85,7 @@ function GenieExpander({ genie, prompt }) {
     <div className="expander">
       <button className="expander-header" onClick={() => setOpen(!open)}>
         <span className="expander-title">
-          <span className="tool-badge genie">SQL:</span>
+          <span className="tool-badge genie">DrugBank Genie:</span>
           <em>{prompt.slice(0, 80)}...</em>
         </span>
         <span className="chevron">{open ? '▾' : '▸'}</span>

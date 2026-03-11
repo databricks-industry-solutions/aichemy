@@ -115,19 +115,23 @@ dbClient2.test_query()
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC CREATE OR REPLACE FUNCTION healthcare_lifesciences.qsar.get_embedding(smiles STRING)
+# MAGIC CREATE OR REPLACE FUNCTION healthcare_lifesciences.qsar.get_embedding(smiles STRING COMMENT 'A valid SMILES molecular structure string, e.g. CCO for ethanol or c1ccccc1 for benzene. Must be a syntactically valid SMILES that RDKit can parse.')
 # MAGIC RETURNS STRING
-# MAGIC COMMENT 'Returns the ECFP molecular fingerprint from SMILES'
+# MAGIC COMMENT 'Returns the ECFP4 molecular fingerprint as a 1024-char bitstring from a SMILES string. Returns an error message if the SMILES is invalid.'
 # MAGIC LANGUAGE PYTHON
 # MAGIC ENVIRONMENT (
 # MAGIC   dependencies = '["rdkit"]',
 # MAGIC   environment_version = 'None'
 # MAGIC )
 # MAGIC AS $$
+# MAGIC if not smiles or not smiles.strip():
+# MAGIC     return "ERROR: smiles parameter is empty or null"
 # MAGIC from rdkit.Chem import MolFromSmiles
 # MAGIC from rdkit.Chem.AllChem import GetMorganGenerator
+# MAGIC mol = MolFromSmiles(smiles.strip())
+# MAGIC if mol is None:
+# MAGIC     return f"ERROR: invalid SMILES string '{smiles}' - RDKit could not parse it"
 # MAGIC fpgen = GetMorganGenerator(radius=2, fpSize=1024)
-# MAGIC mol = MolFromSmiles(smiles)
 # MAGIC vector = fpgen.GetFingerprintAsNumPy(mol)
 # MAGIC bitstring = "".join([str(i) for i in vector])
 # MAGIC return bitstring
