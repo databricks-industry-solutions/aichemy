@@ -6,8 +6,8 @@ from typing import Annotated, Any, AsyncGenerator, Generator, Optional, Sequence
 
 from databricks.sdk import WorkspaceClient
 from databricks_langchain import AsyncCheckpointSaver
+from langchain_core.messages import AIMessage, AnyMessage
 from langchain_core.messages.tool import ToolMessage
-from langchain.messages import AIMessage, AIMessageChunk, AnyMessage
 from mlflow.pyfunc import ResponsesAgent
 from mlflow.types.responses import (
     ResponsesAgentRequest,
@@ -59,11 +59,16 @@ class WrappedAgent(ResponsesAgent):
 
     # Make a prediction (single-step) for the agent
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
-        outputs = [
-            event.item
-            for event in self.predict_stream(request)
-            if event.type == "response.output_item.done" or event.type == "error"
-        ]
+        seen_ids: set[str] = set()
+        outputs = []
+        for event in self.predict_stream(request):
+            if event.type == "response.output_item.done" or event.type == "error":
+                item_id = getattr(event.item, "id", None)
+                if item_id and item_id in seen_ids:
+                    continue
+                if item_id:
+                    seen_ids.add(item_id)
+                outputs.append(event.item)
         return ResponsesAgentResponse(output=outputs, custom_outputs=request.custom_inputs)
 
     
@@ -78,35 +83,50 @@ class WrappedAgent(ResponsesAgent):
             self.agent = self._add_memory(checkpointer)
             cc_msgs = to_chat_completions_input([i.model_dump() for i in request.input])
             recursion_limit = (request.custom_inputs or {}).get("recursion_limit", 25)
-            inputs = {"messages": cc_msgs, "recursion_limit": recursion_limit}
+            inputs = {"messages": cc_msgs}
             thread_id = self._get_or_create_thread_id(request)
-            config = {"configurable": {"thread_id": thread_id}}
+            config = {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": recursion_limit,
+            }
 
-            # Stream events from the agent graph
+            # Stream node-level updates only (not individual LLM tokens via "messages"
+            # mode, which would leak the supervisor's intermediate reasoning/hallucinations).
+            seen_msg_ids: set[str] = set()
+            seen_item_ids: set[str] = set()
+
             async for event in self.agent.astream(
-                inputs, config=config, stream_mode=["updates", "messages"]
+                inputs, config=config, stream_mode="updates"
             ):
-                if event[0] == "updates":
-                    # Stream updated messages from the workflow nodes
-                    for node_data in event[1].values():
-                        if len(node_data.get("messages", [])) > 0:
-                            all_messages = []
-                            for msg in node_data["messages"]:
-                                if isinstance(msg, ToolMessage) and not isinstance(msg.content, str):
-                                    msg.content = json.dumps(msg.content)
-                                all_messages.append(msg)
-                            for item in output_to_responses_items_stream(all_messages):
-                                yield item
-                elif event[0] == "messages":
-                    # Stream generated text message chunks
-                    try:
-                        chunk = event[1][0]
-                        if isinstance(chunk, AIMessageChunk) and (content := chunk.content):
-                            yield ResponsesAgentStreamEvent(
-                                **self.create_text_delta(delta=content, item_id=chunk.id),
+                for node_name, node_data in event.items():
+                    if node_data is None or not isinstance(node_data, dict):
+                        continue
+                    # Skip the supervisor's own messages — they may contain
+                    # hallucinated summaries. The graph's output_mode="last_message"
+                    # ensures the sub-agent's final answer is the authoritative output;
+                    # honour that by only surfacing sub-agent messages.
+                    if node_name == "supervisor":
+                        continue
+                    if len(node_data.get("messages", [])) > 0:
+                        unique_messages = []
+                        for msg in node_data["messages"]:
+                            msg_id = getattr(msg, "id", None)
+                            if msg_id and msg_id in seen_msg_ids:
+                                continue
+                            if msg_id:
+                                seen_msg_ids.add(msg_id)
+                            if isinstance(msg, ToolMessage) and not isinstance(msg.content, str):
+                                msg.content = json.dumps(msg.content)
+                            unique_messages.append(msg)
+                        for item in output_to_responses_items_stream(unique_messages):
+                            item_id = getattr(item, "item_id", None) or (
+                                getattr(item, "item", None) and getattr(item.item, "id", None)
                             )
-                    except:
-                        pass
+                            if item_id and item_id in seen_item_ids:
+                                continue
+                            if item_id:
+                                seen_item_ids.add(item_id)
+                            yield item
 
     # Stream predictions for the agent, yielding output as it's generated
     def predict_stream(

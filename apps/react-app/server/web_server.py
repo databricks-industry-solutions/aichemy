@@ -24,12 +24,31 @@ from pydantic import BaseModel
 from typing import List, Optional, Union
 from databricks.sdk import WorkspaceClient
 import sys
+import mlflow
 
 _app_root = Path(__file__).resolve().parent.parent
 _project_root = _app_root.parent.parent
 sys.path.insert(0, str(_app_root))
 
-from agent.utils import get_secret
+from agent.utils import get_secret, init_mlflow
+
+init_mlflow()
+
+
+def get_trace(trace_id: str, retries: int = 5, delay: float = 2.0):
+    """Get a trace by its ID with retries (agent writes are async).
+    Returns the Trace object or None after all retries fail."""
+    import time
+    for attempt in range(retries):
+        try:
+            trace = mlflow.get_trace(trace_id=trace_id)
+            if trace is not None:
+                return trace
+        except Exception:
+            pass
+        if attempt < retries - 1:
+            time.sleep(delay)
+    return None
 
 # ---------------------------------------------------------------------------
 # Database layer – auto-connects to Lakebase if Databricks auth is available,
@@ -498,6 +517,7 @@ class AgentRequest(BaseModel):
     input: List[Message]
     custom_inputs: CustomInputs
     skill_name: Optional[str] = None  # When set, wraps the prompt with skill instructions
+    new_thread: Optional[bool] = None  # True = first message in thread; only then stream every item
 
 class CreateProjectRequest(BaseModel):
     name: str
@@ -521,95 +541,6 @@ AGENT_URL = f"http://0.0.0.0:{AGENT_PORT}/invocations"
 # Timeout for web server -> agent requests (seconds). Prevents indefinite hang and generic "network error".
 AGENT_REQUEST_TIMEOUT = int(os.getenv("AGENT_REQUEST_TIMEOUT", "300"))
 
-MOCK_AGENT = os.getenv("MOCK_AGENT", "0") == "1"
-
-@app.post("/api/agent")
-async def call_agent(request: AgentRequest):
-    """Proxy request to Databricks agent endpoint (or return mock response)."""
-    # --- Mock mode for local development ---
-    if MOCK_AGENT:
-        user_text = request.input[-1].content if request.input else ""
-        return {
-            "output": [
-                {
-                    "type": "message",
-                    "content": [
-                        {"type": "text", "text": f"[mock] You asked: \"{user_text}\". This is a mock response because the server is running in local dev mode (MOCK_AGENT=1). Connect to Databricks for real agent responses."}
-                    ],
-                }
-            ]
-        }
-
-    # --- Production: proxy to Databricks serving endpoint ---
-    try:
-        messages = [{"role": msg.role, "content": msg.content} for msg in request.input]
-        if request.skill_name and messages:
-            last_msg = messages[-1]
-            enhanced = build_prompt_with_skill(last_msg["content"], request.skill_name)
-            messages[-1] = {"role": last_msg["role"], "content": enhanced}
-
-        input_dict = {
-            "input": messages,
-            "custom_inputs": {"thread_id": request.custom_inputs.thread_id},
-            "databricks_options": {"return_trace": True},
-        }
-        print(f"Input_dict: {input_dict}")
-
-        #endpoint = os.getenv("SERVING_ENDPOINT", "aichemy")
-        w = _get_workspace_client()
-
-        # Get the workspace host and build the URL
-        #host = w.config.host.rstrip('/')
-        #url = f"{host}/serving-endpoints/{endpoint}/invocations"
-        url = AGENT_URL
-
-        # Get authentication headers from the SDK
-        headers = w.config.authenticate()
-        headers["Content-Type"] = "application/json"
-
-        # Make the request (explicit timeout to avoid indefinite hang / "network error")
-        response = requests.post(
-            url=url, headers=headers, json=input_dict, timeout=AGENT_REQUEST_TIMEOUT
-        )
-
-        if response.status_code != 200:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"{response.status_code} Error: {response.text}"
-            )
-
-        raw = response.json()
-
-        # Tool calls come from ALL messages; display text is the last (supervisor) only
-        all_tool_calls = extract_all_tool_calls(raw)
-        text_contents = extract_text_content(raw)
-        cleaned_text = ""
-        if text_contents:
-            cleaned_text = strip_tool_call_tags(text_contents[0])
-        genie_results = parse_genie_results(raw)
-
-        return {
-            **raw,
-            "parsed": {
-                "text": cleaned_text or "No response. Retry or reset the chat.",
-                "tool_calls": all_tool_calls,
-                "genie": genie_results,
-            },
-        }
-    except HTTPException:
-        raise
-    except requests.exceptions.Timeout:
-        raise HTTPException(
-            status_code=504,
-            detail=f"Agent request timed out after {AGENT_REQUEST_TIMEOUT}s. The agent may be busy or slow; try again or increase AGENT_REQUEST_TIMEOUT.",
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# ---------------------------------------------------------------------------
-# Streaming agent endpoint — streams text chunks via SSE
-# ---------------------------------------------------------------------------
 
 @app.post("/api/agent/stream")
 async def call_agent_stream(request: AgentRequest):
@@ -617,28 +548,19 @@ async def call_agent_stream(request: AgentRequest):
     
     Each SSE event is a JSON object with a `type` field:
       - {"type": "text", "content": "..."} — a text chunk to append
-      - {"type": "tool_calls", "data": [...]}  — parsed tool calls
-      - {"type": "genie", "data": [...]}       — parsed genie SQL results
+      - {"type": "trace_id", "trace_id": "tr-..."} — trace id
+    # Not in streamed response
+    #   - {"type": "tool_calls", "data": [...]}  — parsed tool calls
+    #   - {"type": "genie", "data": [...]}       — parsed genie SQL results
       - {"type": "done"}                       — stream complete
-      - {"type": "error", "content": "..."}    — error occurred
+    # Not in streamed response
+    #  - {"type": "error", "content": "..."}    — error occurred
     """
-    if MOCK_AGENT:
-        user_text = request.input[-1].content if request.input else ""
-        async def mock_stream():
-            import asyncio
-            words = f"[mock] You asked: \"{user_text}\". This is a streaming mock response.".split()
-            for word in words:
-                yield f"data: {json.dumps({'type': 'text', 'content': word + ' '})}\n\n"
-                await asyncio.sleep(0.05)
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        return StreamingResponse(mock_stream(), media_type="text/event-stream")
 
     def _sse(event: dict) -> str:
         return f"data: {json.dumps(event)}\n\n"
 
     def stream_generator():
-        import time
-
         try:
             # If skills are enabled, wrap the user prompt with skill instructions
             messages = [{"role": msg.role, "content": msg.content} for msg in request.input]
@@ -651,21 +573,21 @@ async def call_agent_stream(request: AgentRequest):
                 "input": messages,
                 "custom_inputs": {"thread_id": request.custom_inputs.thread_id},
                 "databricks_options": {"return_trace": True},
+                "stream": True,
             }
 
-            # endpoint = os.getenv("SERVING_ENDPOINT", "aichemy")
+            print(f"Input_dict: {input_dict}")
             w = _get_workspace_client()
-            # host = w.config.host.rstrip('/')
-            # url = f"{host}/serving-endpoints/{endpoint}/invocations"
             url = AGENT_URL
             headers = w.config.authenticate()
             headers["Content-Type"] = "application/json"
+            headers["x-mlflow-return-trace-id"] = "true"
 
             yield _sse({"type": "status", "content": "Waiting for agent..."})
 
             try:
                 resp = requests.post(
-                    url=url, headers=headers, json=input_dict, timeout=AGENT_REQUEST_TIMEOUT
+                    url=url, headers=headers, json=input_dict, timeout=AGENT_REQUEST_TIMEOUT, stream=True
                 )
             except requests.exceptions.Timeout:
                 yield _sse({
@@ -675,32 +597,68 @@ async def call_agent_stream(request: AgentRequest):
                 return
 
             if resp.status_code != 200:
-                yield _sse({"type": "error", "content": f"{resp.status_code}: {resp.text[:500]}"})
+                body = resp.text if not resp.raw.closed else ""
+                yield _sse({"type": "error", "content": f"{resp.status_code}: {body[:500]}"})
                 return
 
             yield _sse({"type": "status", "content": "Streaming response..."})
 
-            raw = resp.json()
-            all_tool_calls = extract_all_tool_calls(raw)
-            text_contents = extract_text_content(raw)
-            cleaned_text = ""
-            if text_contents:
-                cleaned_text = strip_tool_call_tags(text_contents[0])
+            # Agent returns SSE: data: {"type": "response.output_item.done", "item": {...}},
+            # data: {"trace_id": "tr-..."}, then data: [DONE]
+            # With the same thread_id the agent may resend all prior turns; only stream the last item (current turn).
+            # For a new thread (new_thread=True) we stream every item as it arrives (no prior turns to skip).
+            is_new_thread = request.new_thread is True
+            accumulated_output = []
+            trace_id = None
 
-            # Stream the text word-by-word for typewriter effect
-            if cleaned_text:
-                words = cleaned_text.split(' ')
-                for i, word in enumerate(words):
-                    chunk = word + (' ' if i < len(words) - 1 else '')
-                    yield _sse({"type": "text", "content": chunk})
-                    time.sleep(0.02)
+            for line in resp.iter_lines(decode_unicode=True):
+                if line is None:
+                    continue
+                line = line.strip()
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:].strip()
+                if not payload:
+                    continue
+                if payload == "[DONE]":
+                    break
+                try:
+                    event = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                ev_type = event.get("type")
+                if ev_type == "response.output_item.done":
+                    item = event.get("item")
+                    if item:
+                        accumulated_output.append(item)
+                        if is_new_thread:
+                            yield from stream_new_content(item, _sse)
+                elif ev_type == "error":
+                    yield _sse({"type": "error", "content": event.get("message", str(event))})
+                    return
+                elif "trace_id" in event:
+                    trace_id = event["trace_id"]
 
+            # Response fully consumed — use trace_id from stream if present
+            if trace_id:
+                print(f"trace_id: {trace_id}")
+
+            # Existing thread: stream only the last item to avoid repeating previous responses
+            last_item = accumulated_output[-1] if accumulated_output else None
+            if not is_new_thread and last_item:
+                yield from stream_new_content(last_item, _sse)
+
+            # Emit tool_calls and genie only from the current turn (last item; for new thread that's the only item)
+            output_for_turn = [last_item] if last_item else []
+            synthetic = {"output": output_for_turn}
+            all_tool_calls = extract_all_tool_calls(synthetic)
             if all_tool_calls:
                 yield _sse({"type": "tool_calls", "data": all_tool_calls})
-
-            genie_results = parse_genie_results(raw)
+            genie_results = parse_genie_results(synthetic)
             if genie_results:
                 yield _sse({"type": "genie", "data": genie_results})
+            if trace_id:
+                yield _sse({"type": "trace_id", "trace_id": trace_id})
 
         except Exception as e:
             yield _sse({"type": "error", "content": str(e)})
@@ -708,6 +666,67 @@ async def call_agent_stream(request: AgentRequest):
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# MLflow Trace endpoint
+# ---------------------------------------------------------------------------
+
+def _safe_json(obj):
+    """Convert an object to a JSON-safe value. Falls back to str() for unpicklable objects."""
+    if obj is None:
+        return None
+    try:
+        json.dumps(obj)
+        return obj
+    except (TypeError, ValueError, OverflowError):
+        try:
+            return str(obj)
+        except Exception:
+            return "<unserializable>"
+
+
+def _serialize_trace(trace) -> dict:
+    """Convert an MLflow Trace object to a JSON-serializable dict."""
+    info = trace.info
+    spans = []
+    for s in (trace.data.spans if trace.data else []):
+        attrs = {}
+        try:
+            for k, v in (s.attributes or {}).items():
+                attrs[str(k)] = _safe_json(v)
+        except Exception:
+            pass
+        spans.append({
+            "name": getattr(s, "name", None),
+            "span_id": getattr(s, "span_id", None),
+            "parent_id": getattr(s, "parent_id", None),
+            "status": str(getattr(s, "status", "")),
+            "start_time_ns": getattr(s, "start_time_ns", None),
+            "end_time_ns": getattr(s, "end_time_ns", None),
+            "inputs": _safe_json(getattr(s, "inputs", None)),
+            "outputs": _safe_json(getattr(s, "outputs", None)),
+            "attributes": attrs,
+        })
+    return {
+        "trace_id": getattr(info, "trace_id", None),
+        "status": str(getattr(info, "state", "")),
+        "execution_time_ms": getattr(info, "execution_duration", None),
+        "request_time": getattr(info, "request_time", None),
+        "tags": dict(info.tags) if getattr(info, "tags", None) else {},
+        "spans": spans,
+    }
+
+
+@app.get("/api/trace/{trace_id}")
+async def api_get_trace(trace_id: str):
+    """Fetch an MLflow trace by ID (with retries for async write delay)."""
+    import asyncio
+    loop = asyncio.get_running_loop()
+    trace = await loop.run_in_executor(None, get_trace, trace_id)
+    if trace is None:
+        raise HTTPException(status_code=404, detail=f"Trace '{trace_id}' not found after retries")
+    return _serialize_trace(trace)
 
 
 # ---------------------------------------------------------------------------
@@ -788,6 +807,24 @@ def strip_tool_call_tags(text_content: str) -> str:
     text_content = re.sub(r'<results>.*', '', text_content, flags=re.DOTALL)
     text_content = re.sub(r'\n\s*\n\s*\n+', '\n\n', text_content)
     return text_content.strip()
+
+
+def stream_new_content(item: Optional[dict], _sse):
+    """Yield SSE events for one response item's text (typewriter effect). Skips tool-call tags."""
+    import time
+    if not item:
+        return
+    for block in item.get("content") or []:
+        if block.get("type") == "output_text":
+            text = block.get("text") or ""
+            if text:
+                cleaned = strip_tool_call_tags(text)
+                if cleaned:
+                    words = cleaned.split(" ")
+                    for i, word in enumerate(words):
+                        chunk = word + (" " if i < len(words) - 1 else "")
+                        yield _sse({"type": "text", "content": chunk})
+                        time.sleep(0.02)
 
 
 def parse_genie_results(response_json: dict) -> list[dict]:

@@ -129,7 +129,22 @@ export default function ChatPanel({
             </div>
             <div className="message-content">
               {msg.role === 'assistant' ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                <>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                  {msg.traceId && (
+                    <div className="trace-id-row">
+                      <code className="trace-id">{msg.traceId}</code>
+                      <button
+                        type="button"
+                        className="copy-trace-btn"
+                        onClick={() => navigator.clipboard.writeText(msg.traceId)}
+                        title="Copy trace ID"
+                      >
+                        Copy trace ID
+                      </button>
+                    </div>
+                  )}
+                </>
               ) : (
                 msg.content
               )}

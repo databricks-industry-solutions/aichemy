@@ -18,6 +18,7 @@ retriever:
   vs_index: aichemy2_catalog.aichemy.zinc_vs
   vs_source: aichemy2_catalog.aichemy.zinc15_250k_full
   k: 5
+experiment_id: 1001868044455114
 # for agentic memory
 lakebase_agent:
   instance_name: aichemy

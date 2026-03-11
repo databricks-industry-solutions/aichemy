@@ -9,21 +9,32 @@ Requests wait on a threading.Event until the agent is ready.
 """
 
 import asyncio
+import json
 import logging
 import os
 import sys
 import threading
 from pathlib import Path
 from typing import AsyncGenerator, Optional
+from uuid import uuid4
 import yaml
 from mlflow.genai.agent_server import invoke, stream
-from mlflow.types.responses import ResponsesAgentRequest, ResponsesAgentResponse, ResponsesAgentStreamEvent  # noqa: F401
+from mlflow.types.responses import (
+    ResponsesAgentRequest,
+    ResponsesAgentResponse,
+    ResponsesAgentStreamEvent,
+    output_to_responses_items_stream,
+    to_chat_completions_input,
+)
+from langgraph.graph.state import StateGraph
 
 logger = logging.getLogger(__name__)
 
 _app_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_app_root))
 
+from agent.responses_agent import WrappedAgent
+from agent.utils import init_workspace_client
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -31,17 +42,20 @@ sys.path.insert(0, str(_app_root))
 with open(_app_root / "config.yml") as _f:
     _cfg = yaml.safe_load(_f)
 
+ws_client = init_workspace_client(_cfg)
+
 # ---------------------------------------------------------------------------
 # Agent construction
 # ---------------------------------------------------------------------------
 
+_workflow: Optional[StateGraph] = None
 _agent = None
 _agent_ready = threading.Event()
 _agent_build_error: Optional[str] = None
 
 
-def _build_agent():
-    """Instantiate the full multi-agent supervisor workflow and return a WrappedAgent."""
+def _build_agent() -> StateGraph:
+    """Instantiate the full multi-agent supervisor workflow (uncompiled StateGraph)."""
     # import nest_asyncio
     # nest_asyncio.apply()
 
@@ -54,18 +68,6 @@ def _build_agent():
     from langchain.agents import create_agent
     from langchain.tools import tool
     from langgraph_supervisor import create_supervisor
-
-    from agent.responses_agent import WrappedAgent
-    from agent.utils import get_secret
-
-    
-    client_id = get_secret(scope='aichemy', key='client_id')
-    client_secret = get_secret(scope='aichemy', key='client_secret')
-    ws_client = WorkspaceClient(
-        host=_cfg["host"],
-        client_id=client_id,
-        client_secret=client_secret
-    )
 
     llm = ChatDatabricks(endpoint=_cfg["llm_endpoint"])
 
@@ -182,27 +184,44 @@ def _build_agent():
 4. MCP agent: connects to the PubChem, PubMed and OpenTargets MCP servers
 
 Because you are an autonomous multi-agent system, do not ask for more follow up information. Instead, use chain-of-thought to reason and break down the request into
-achievable steps based on the agentic tools that you have access to. 
+achievable steps based on the agentic tools that you have access to.
+
+CRITICAL RULES:
+1. When a sub-agent returns data (tables, query results, search results), pass through the
+   sub-agent's response EXACTLY as-is. NEVER fabricate, extend, or add rows/data that were not
+   in the sub-agent's output. If the result seems incomplete, say so — do NOT invent entries.
+2. NEVER call the same agent twice for the same request. Once an agent returns a result, accept
+   it and move on. Do NOT retry or re-route to the same agent hoping for a different answer.
+3. When you have a complete result from a sub-agent, return it immediately. Do not hand off again.
 """,
         output_mode="last_message",
         add_handoff_messages=False,
-        forward_messages=True,
         parallel_tool_calls=True,
     )
 
-    # WrappedAgent (responses_agent_new) only needs the workflow; optional lakebase from config
-    return WrappedAgent( # fallback when no checkpointer
-      workflow=workflow,
-      workspace_client=ws_client,
-      lakebase_instance=_cfg["lakebase_agent"]["instance_name"],
-  )
+    return workflow
+
+
+def build_responses_agent(workflow: Optional[StateGraph] = None) -> WrappedAgent:
+    """Wrap a LangGraph workflow in a WrappedAgent (ResponsesAgent).
+
+    If *workflow* is None, calls _build_agent() to create one.
+    """
+    if workflow is None:
+        workflow = _build_agent()
+    return WrappedAgent(
+        workflow=workflow,
+        workspace_client=ws_client,
+        lakebase_instance=_cfg["lakebase_agent"]["instance_name"],
+    )
 
 
 def _load_agent_background():
-    global _agent, _agent_build_error
+    global _agent, _workflow, _agent_build_error
     try:
         logger.info("Building agent...")
-        _agent = _build_agent()
+        _workflow = _build_agent()
+        _agent = build_responses_agent(_workflow)
         logger.info("Agent ready.")
     except Exception as exc:
         _agent_build_error = f"{type(exc).__name__}: {exc}"
@@ -240,12 +259,41 @@ async def predict(request: ResponsesAgentRequest) -> ResponsesAgentResponse:
     return await loop.run_in_executor(None, _agent.predict, request)
 
 
-@stream()
+# @stream()
 async def predict_stream(
     request: ResponsesAgentRequest,
 ) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
-    """Stream agent responses token-by-token via AgentServer /invocations with stream=true."""
+    """Stream via WrappedAgent (Lakebase checkpointer + ResponsesAgent helpers)."""
     await _wait_for_agent()
-    # Use async generator so the server's "async for" works; predict_stream() is sync.
     async for event in _agent._predict_stream_async(request):
         yield event
+
+
+# ---------------------------------------------------------------------------
+# Alternative: raw LangGraph astream for debugging (no WrappedAgent / Lakebase)
+# ---------------------------------------------------------------------------
+# To use this instead, swap the @stream() decorator:
+#   1. Remove @stream() from predict_stream above
+#   2. Uncomment @stream() on predict_stream_raw below
+
+
+@stream()
+async def predict_stream_raw(
+    request: ResponsesAgentRequest,
+) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
+    """Simple debug stream directly from the LangGraph workflow using astream.
+
+    Compiles the workflow without a checkpointer (no Lakebase memory) and
+    prints each chunk to stdout for inspection.
+    """
+    await _wait_for_agent()
+
+    cc_msgs = to_chat_completions_input([i.model_dump() for i in request.input])
+    ci = dict(request.custom_inputs or {})
+    thread_id = ci.get("thread_id", str(uuid4()))
+    inputs = {"messages": cc_msgs}
+    config = {"configurable": {"thread_id": thread_id}}
+
+    async for chunk in _workflow.compile().astream(inputs, config=config):
+        print(chunk, flush=True)
+    yield ResponsesAgentStreamEvent(type="response.completed")

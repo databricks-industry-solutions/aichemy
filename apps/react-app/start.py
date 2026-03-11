@@ -51,10 +51,10 @@ def main():
     signal.signal(signal.SIGINT, on_signal)
     signal.signal(signal.SIGTERM, on_signal)
 
-    agent_port = os.environ.get("AGENT_PORT", "8080")
-    print(f"Starting agent server on port {agent_port}...")
+    AGENT_PORT = os.environ.get("AGENT_PORT", "8080")
+    print(f"Starting agent server on port {AGENT_PORT}...")
     agent_proc = subprocess.Popen(
-        [sys.executable, "agent/start_server.py", "--port", agent_port],
+        [sys.executable, "agent/start_server.py", "--port", AGENT_PORT],
         cwd=APP_ROOT,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
