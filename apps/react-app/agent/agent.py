@@ -35,7 +35,7 @@ _app_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_app_root))
 
 from agent.responses_agent import WrappedAgent
-from agent.utils import init_workspace_client
+from agent.utils import init_workspace_client, get_secret
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ _agent_build_error: Optional[str] = None
 # Persistent MCP event loop — keeps MCP sessions alive across queries
 # ---------------------------------------------------------------------------
 _mcp_loop = asyncio.new_event_loop()
-_mcp_client = None
+mcp_client = None
 
 
 def _run_mcp_loop():
@@ -72,6 +72,43 @@ threading.Thread(target=_run_mcp_loop, daemon=True, name="mcp-loop").start()
 def _mcp_run(coro, timeout=300):
     """Schedule a coroutine on the persistent MCP loop and block for the result."""
     return asyncio.run_coroutine_threadsafe(coro, _mcp_loop).result(timeout=timeout)
+
+
+def _log_exception_group(exc: BaseException) -> None:
+    """Recursively log all sub-exceptions from an ExceptionGroup."""
+    if isinstance(exc, BaseExceptionGroup):
+        for i, sub in enumerate(exc.exceptions, 1):
+            logger.error("  MCP sub-exception %d/%d: %s: %s", i, len(exc.exceptions),
+                         type(sub).__name__, sub)
+            _log_exception_group(sub)
+    else:
+        logger.error("  MCP root cause: %s: %s", type(exc).__name__, exc)
+
+
+def _load_mcp_tools_individually(servers, max_retries: int = 3) -> list:
+    """Try loading tools from each MCP server with retries; skip persistent failures."""
+    from databricks_langchain import DatabricksMultiServerMCPClient
+    all_tools = []
+    for srv in servers:
+        loaded = False
+        for attempt in range(1, max_retries + 1):
+            single_client = DatabricksMultiServerMCPClient([srv])
+            try:
+                tools = _mcp_run(single_client.get_tools(), timeout=300)
+                logger.info("  ✓ %s: %d tools loaded (attempt %d)", srv.name, len(tools), attempt)
+                all_tools.extend(tools)
+                loaded = True
+                break
+            except BaseException as e:
+                _log_exception_group(e)
+                if attempt < max_retries:
+                    wait = 2 ** attempt
+                    logger.info("  ⟳ %s: retry %d/%d in %ds…", srv.name, attempt, max_retries, wait)
+                    time.sleep(wait)
+                else:
+                    logger.warning("  ✗ %s: failed after %d attempts", srv.name, max_retries)
+    logger.info("MCP fallback complete: %d total tools loaded", len(all_tools))
+    return all_tools
 
 
 def _build_agent() -> StateGraph:
@@ -146,35 +183,42 @@ def _build_agent() -> StateGraph:
     uc = _cfg["uc_connections"]
     host = _cfg["host"]
     servers = [
-        DatabricksMCPServer(
+        # DatabricksMCPServer(
+        #     name="pubchem",
+        #     url=f'{_cfg["host"]}api/2.0/mcp/external/{_cfg["uc_connections"]["pubchem"]}',
+        #     workspace_client=ws_client,
+        #     timeout=60,
+        #     terminate_on_close=False
+        # ),
+        MCPServer(
             name="pubchem",
-            url=f'{_cfg["host"]}api/2.0/mcp/external/{_cfg["uc_connections"]["pubchem"]}',
-            workspace_client=ws_client,
+            url="https://glama.ai/endpoints/xb306rnopq/mcp",
             timeout=60,
-            terminate_on_close=False
-        ),
-        DatabricksMCPServer(
-            name="pubmed",
-            url=f'{_cfg["host"]}api/2.0/mcp/external/{_cfg["uc_connections"]["pubmed"]}',
-            workspace_client=ws_client,
-            terminate_on_close=False
-        ),
-        DatabricksMCPServer(
-            name="opentargets",
-            url=f'{_cfg["host"]}api/2.0/mcp/external/{_cfg["uc_connections"]["opentargets"]}',
-            workspace_client=ws_client,
             terminate_on_close=False,
+            headers={"Authorization": f"Bearer {get_secret(scope='aichemy', key='pubchem_glama_api')}"}
         ),
+        MCPServer(
+            name="pubmed",
+            url="https://glama.ai/endpoints/mp1ke6xrpi/mcp",
+            timeout=60,
+            terminate_on_close=False,
+            headers={"Authorization": f"Bearer {get_secret(scope='aichemy', key='pubmed_glama_api')}"}
+        ),
+        MCPServer(
+            name="opentargets",
+            url="https://mcp.platform.opentargets.org/mcp"
+        )
     ]
 
-    global _mcp_client
-    _mcp_client = DatabricksMultiServerMCPClient(servers)
+    global mcp_client
+    mcp_client = DatabricksMultiServerMCPClient(servers)
     try:
-        mcp_tools = _mcp_run(_mcp_client.get_tools())
+        mcp_tools = _mcp_run(mcp_client.get_tools())
         logger.info("MCP tools loaded: %d tools", len(mcp_tools))
-    except Exception as exc:
-        logger.warning("MCP tool loading failed (%s) — building mcp_agent with no tools.", exc)
-        mcp_tools = []
+    except BaseException as exc:
+        _log_exception_group(exc)
+        logger.warning("Batch MCP loading failed — trying servers individually…")
+        mcp_tools = _load_mcp_tools_individually(servers)
     mcp_prompt = """You are a multi-MCP server agent connected to:
     1. PubChem MCP server that provides everything about chemical compounds
     2. PubMed MCP server that searches biomedical literature and retrieves free full text if any. 
@@ -264,11 +308,11 @@ def _warmup(agent: "WrappedAgent") -> None:
 
 def _ping_mcp() -> None:
     """Send tools/list to each MCP server to keep the sessions on _mcp_loop alive."""
-    if _mcp_client is None:
+    if mcp_client is None:
         return
     try:
         logger.info("Pinging MCP servers…")
-        _mcp_run(_mcp_client.get_tools(), timeout=120)
+        _mcp_run(mcp_client.get_tools(), timeout=120)
         logger.info("MCP ping OK.")
     except Exception as exc:
         logger.warning("MCP ping failed (non-fatal): %s", exc)
@@ -284,7 +328,7 @@ def _keepalive_loop() -> None:
             idle = time.monotonic() - _last_activity
         if idle >= _KEEPALIVE_IDLE_SECS:
             _ping_mcp()
-            _warmup(_agent)
+            #_warmup(_agent)
             _touch_activity()
 
 
@@ -295,7 +339,7 @@ def _load_agent_background():
         _workflow = _build_agent()
         _agent = build_responses_agent(_workflow)
         logger.info("Agent ready.")
-        _warmup(_agent)
+        #_warmup(_agent)
     except Exception as exc:
         _agent_build_error = f"{type(exc).__name__}: {exc}"
         logger.exception("Failed to build agent")

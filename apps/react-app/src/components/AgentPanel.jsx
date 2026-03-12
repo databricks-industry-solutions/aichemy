@@ -1,13 +1,69 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { fetchAgentStatus, warmupAgent } from '../api/agentAPI'
 
 export default function AgentPanel({
   toolCallGroups,  // [{prompt, toolCalls: [{function_name, parameters, thinking}]}]
   genieGroups,     // [{prompt, results: [{description, query, result}]}]
   isLoading,
 }) {
+  const [agentStatus, setAgentStatus] = useState({ ready: false, building: true, error: null })
+  const [warmingUp, setWarmingUp] = useState(false)
+  const pollRef = useRef(null)
+
+  const poll = useCallback(async () => {
+    const status = await fetchAgentStatus()
+    setAgentStatus(status)
+    if (status.ready) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    poll()
+    pollRef.current = setInterval(poll, 5000)
+    return () => clearInterval(pollRef.current)
+  }, [poll])
+
+  const handleWarmup = async () => {
+    setWarmingUp(true)
+    await warmupAgent()
+    setTimeout(() => setWarmingUp(false), 8000)
+  }
+
+  const lightColor = agentStatus.error
+    ? 'red'
+    : agentStatus.ready
+      ? 'green'
+      : 'amber'
+
   return (
     <aside className="agent-column">
-      <h3 className="agent-title">Agent Activity</h3>
+      <div className="agent-header-row">
+        <h3 className="agent-title">Agent Activity</h3>
+        <div className="agent-status-indicator">
+          <span className={`traffic-light ${lightColor}`} title={
+            agentStatus.error
+              ? `Error: ${agentStatus.error}`
+              : agentStatus.ready
+                ? 'Agent ready'
+                : 'Agent building…'
+          } />
+          <span className="agent-status-label">
+            {agentStatus.error ? 'Error' : agentStatus.ready ? 'Ready' : 'Building…'}
+          </span>
+          {agentStatus.ready && (
+            <button
+              className="warmup-btn"
+              onClick={handleWarmup}
+              disabled={warmingUp}
+              title="Send a warmup query to pre-warm LLM endpoints"
+            >
+              {warmingUp ? '⏳' : '🔥'}
+            </button>
+          )}
+        </div>
+      </div>
       <div className="agent-divider" />
 
       <div className="agent-activity-scroll">
@@ -15,7 +71,7 @@ export default function AgentPanel({
         {[...toolCallGroups].reverse().map((group, gi) => (
           <div key={`tc-${gi}`} className="activity-group">
             <div className="activity-group-prompt">
-              Tools calls: <em>{group.prompt.slice(0, 80)}...</em>
+              Tool: <em>{group.prompt.slice(0, 80)}...</em>
             </div>
             {group.toolCalls.map((tc, ti) => (
               <ToolCallExpander key={ti} index={ti + 1} toolCall={tc} />
@@ -69,8 +125,8 @@ function ToolCallExpander({ index, toolCall }) {
               <strong>{k}:</strong> {v}
             </div>
           ))}
-          {toolCall.thinking && (
-            <div className="tool-thinking">{toolCall.results}</div>
+          {toolCall.results && (
+            <pre className="tool-results">{toolCall.results}</pre>
           )}
         </div>
       )}
@@ -85,7 +141,7 @@ function GenieExpander({ genie, prompt }) {
     <div className="expander">
       <button className="expander-header" onClick={() => setOpen(!open)}>
         <span className="expander-title">
-          <span className="tool-badge genie">DrugBank Genie:</span>
+          <span className="tool-badge genie">Genie:</span>
           <em>{prompt.slice(0, 80)}...</em>
         </span>
         <span className="chevron">{open ? '▾' : '▸'}</span>

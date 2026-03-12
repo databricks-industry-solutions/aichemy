@@ -133,15 +133,15 @@ export default function ChatPanel({
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                   {msg.traceId && (
                     <div className="trace-id-row">
-                      <code className="trace-id">{msg.traceId}</code>
-                      <button
-                        type="button"
-                        className="copy-trace-btn"
-                        onClick={() => navigator.clipboard.writeText(msg.traceId)}
-                        title="Copy trace ID"
+                      <a
+                        className="trace-link"
+                        href={`${import.meta.env.VITE_API_URL || ''}/api/trace/${msg.traceId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`View trace ${msg.traceId}`}
                       >
-                        Copy trace ID
-                      </button>
+                        {msg.traceId}
+                      </a>
                     </div>
                   )}
                 </>

@@ -1101,6 +1101,36 @@ async def health_check():
     return result
 
 # ---------------------------------------------------------------------------
+# Agent status + warmup — proxied from the AgentServer
+# ---------------------------------------------------------------------------
+
+@app.get("/api/agent/status")
+async def agent_status():
+    """Proxy agent readiness check to the AgentServer."""
+    try:
+        resp = requests.get(
+            f"http://0.0.0.0:{AGENT_PORT}/agent-status",
+            timeout=5,
+        )
+        return resp.json()
+    except Exception:
+        return {"ready": False, "building": True, "error": None}
+
+
+@app.post("/api/agent/warmup")
+async def agent_warmup():
+    """Trigger a warmup query on the AgentServer."""
+    try:
+        resp = requests.post(
+            f"http://0.0.0.0:{AGENT_PORT}/agent-warmup",
+            timeout=10,
+        )
+        return resp.json()
+    except Exception as e:
+        return {"ok": False, "detail": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # Lakebase diagnostic endpoint — step-by-step connection test
 # ---------------------------------------------------------------------------
 

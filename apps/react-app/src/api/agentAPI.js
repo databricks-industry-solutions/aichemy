@@ -187,6 +187,38 @@ export async function fetchDbStatus() {
 }
 
 // ---------------------------------------------------------------------------
+// Agent status + warmup
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether the backend agent is ready to serve requests.
+ * @returns {Promise<{ready: boolean, building: boolean, error: string|null}>}
+ */
+export async function fetchAgentStatus() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/agent/status`)
+    if (response.ok) return response.json()
+  } catch {
+    // agent server unreachable
+  }
+  return { ready: false, building: true, error: null }
+}
+
+/**
+ * Trigger a warmup query on the agent to pre-warm LLM endpoints, Lakebase, etc.
+ * @returns {Promise<{ok: boolean, detail: string}>}
+ */
+export async function warmupAgent() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/agent/warmup`, { method: 'POST' })
+    if (response.ok) return response.json()
+    return { ok: false, detail: `HTTP ${response.status}` }
+  } catch (e) {
+    return { ok: false, detail: e.message }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Project persistence API
 // ---------------------------------------------------------------------------
 
