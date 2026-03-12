@@ -642,6 +642,10 @@ async def call_agent_stream(request: AgentRequest):
                 elif "trace_id" in event:
                     trace_id = event["trace_id"]
 
+            # If the stream ended without any output, the agent likely errored out
+            if not accumulated_output:
+                yield _sse({"type": "error", "content": "Agent stream ended without producing output. Check agent logs for details."})
+
             # Response fully consumed — use trace_id from stream if present
             if trace_id:
                 print(f"trace_id: {trace_id}")
@@ -668,8 +672,10 @@ async def call_agent_stream(request: AgentRequest):
                         yield _sse({"type": "genie", "data": parsed["genie_results"]})
                 yield _sse({"type": "trace_id", "trace_id": trace_id})
 
+        except requests.exceptions.ConnectionError as e:
+            yield _sse({"type": "error", "content": f"Lost connection to agent server: {e}"})
         except Exception as e:
-            yield _sse({"type": "error", "content": str(e)})
+            yield _sse({"type": "error", "content": f"{type(e).__name__}: {e}"})
 
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 

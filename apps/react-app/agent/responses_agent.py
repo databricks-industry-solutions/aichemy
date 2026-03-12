@@ -95,38 +95,44 @@ class WrappedAgent(ResponsesAgent):
             seen_msg_ids: set[str] = set()
             seen_item_ids: set[str] = set()
 
-            async for event in self.agent.astream(
-                inputs, config=config, stream_mode="updates"
-            ):
-                for node_name, node_data in event.items():
-                    if node_data is None or not isinstance(node_data, dict):
-                        continue
-                    # Skip the supervisor's own messages — they may contain
-                    # hallucinated summaries. The graph's output_mode="last_message"
-                    # ensures the sub-agent's final answer is the authoritative output;
-                    # honour that by only surfacing sub-agent messages.
-                    if node_name == "supervisor":
-                        continue
-                    if len(node_data.get("messages", [])) > 0:
-                        unique_messages = []
-                        for msg in node_data["messages"]:
-                            msg_id = getattr(msg, "id", None)
-                            if msg_id and msg_id in seen_msg_ids:
-                                continue
-                            if msg_id:
-                                seen_msg_ids.add(msg_id)
-                            if isinstance(msg, ToolMessage) and not isinstance(msg.content, str):
-                                msg.content = json.dumps(msg.content)
-                            unique_messages.append(msg)
-                        for item in output_to_responses_items_stream(unique_messages):
-                            item_id = getattr(item, "item_id", None) or (
-                                getattr(item, "item", None) and getattr(item.item, "id", None)
-                            )
-                            if item_id and item_id in seen_item_ids:
-                                continue
-                            if item_id:
-                                seen_item_ids.add(item_id)
-                            yield item
+            try:
+                async for event in self.agent.astream(
+                    inputs, config=config, stream_mode="updates"
+                ):
+                    for node_name, node_data in event.items():
+                        if node_data is None or not isinstance(node_data, dict):
+                            continue
+                        # Skip the supervisor's own messages — they may contain
+                        # hallucinated summaries. The graph's output_mode="last_message"
+                        # ensures the sub-agent's final answer is the authoritative output;
+                        # honour that by only surfacing sub-agent messages.
+                        if node_name == "supervisor":
+                            continue
+                        if len(node_data.get("messages", [])) > 0:
+                            unique_messages = []
+                            for msg in node_data["messages"]:
+                                msg_id = getattr(msg, "id", None)
+                                if msg_id and msg_id in seen_msg_ids:
+                                    continue
+                                if msg_id:
+                                    seen_msg_ids.add(msg_id)
+                                if isinstance(msg, ToolMessage) and not isinstance(msg.content, str):
+                                    msg.content = json.dumps(msg.content)
+                                unique_messages.append(msg)
+                            for item in output_to_responses_items_stream(unique_messages):
+                                item_id = getattr(item, "item_id", None) or (
+                                    getattr(item, "item", None) and getattr(item.item, "id", None)
+                                )
+                                if item_id and item_id in seen_item_ids:
+                                    continue
+                                if item_id:
+                                    seen_item_ids.add(item_id)
+                                yield item
+            except Exception as e:
+                logger.exception("Error during agent streaming")
+                error_msg = AIMessage(content=f"**Agent error:** `{type(e).__name__}`: {e}")
+                for item in output_to_responses_items_stream([error_msg]):
+                    yield item
 
     # Stream predictions for the agent, yielding output as it's generated
     def predict_stream(

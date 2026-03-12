@@ -385,8 +385,15 @@ async def predict_stream(
     """Stream via WrappedAgent (Lakebase checkpointer + ResponsesAgent helpers)."""
     await _wait_for_agent()
     _touch_activity()
-    async for event in _agent._predict_stream_async(request):
-        yield event
+    try:
+        async for event in _agent._predict_stream_async(request):
+            yield event
+    except Exception as e:
+        logger.exception("Error in predict_stream")
+        from langchain_core.messages import AIMessage
+        error_msg = AIMessage(content=f"**Agent error:** `{type(e).__name__}`: {e}")
+        for item in output_to_responses_items_stream([error_msg]):
+            yield item
 
 
 # ---------------------------------------------------------------------------
