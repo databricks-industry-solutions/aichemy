@@ -190,13 +190,13 @@ def _build_agent() -> StateGraph:
         #     timeout=60,
         #     terminate_on_close=False
         # ),
-        MCPServer(
-            name="pubchem",
-            url="https://glama.ai/endpoints/xb306rnopq/mcp",
-            timeout=60,
-            terminate_on_close=False,
-            headers={"Authorization": f"Bearer {get_secret(scope='aichemy', key='pubchem_glama_api')}"}
-        ),
+        # MCPServer(
+        #     name="pubchem",
+        #     url="https://glama.ai/endpoints/xb306rnopq/mcp",
+        #     timeout=60,
+        #     terminate_on_close=False,
+        #     headers={"Authorization": f"Bearer {get_secret(scope='aichemy', key='pubchem_glama_api')}"}
+        # ),
         MCPServer(
             name="pubmed",
             url="https://glama.ai/endpoints/mp1ke6xrpi/mcp",
@@ -385,8 +385,15 @@ async def predict_stream(
     """Stream via WrappedAgent (Lakebase checkpointer + ResponsesAgent helpers)."""
     await _wait_for_agent()
     _touch_activity()
-    async for event in _agent._predict_stream_async(request):
-        yield event
+    try:
+        async for event in _agent._predict_stream_async(request):
+            yield event
+    except Exception as e:
+        logger.exception("Error in predict_stream")
+        from langchain_core.messages import AIMessage
+        error_msg = AIMessage(content=f"**Agent error:** `{type(e).__name__}`: {e}")
+        for item in output_to_responses_items_stream([error_msg]):
+            yield item
 
 
 # ---------------------------------------------------------------------------
