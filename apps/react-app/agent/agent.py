@@ -190,13 +190,13 @@ def _build_agent() -> StateGraph:
         #     timeout=60,
         #     terminate_on_close=False
         # ),
-        MCPServer(
-            name="pubchem",
-            url="https://glama.ai/endpoints/xb306rnopq/mcp",
-            timeout=60,
-            terminate_on_close=False,
-            headers={"Authorization": f"Bearer {get_secret(scope='aichemy', key='pubchem_glama_api')}"}
-        ),
+        # MCPServer(
+        #     name="pubchem",
+        #     url="https://glama.ai/endpoints/xb306rnopq/mcp",
+        #     timeout=60,
+        #     terminate_on_close=False,
+        #     headers={"Authorization": f"Bearer {get_secret(scope='aichemy', key='pubchem_glama_api')}"}
+        # ),
         MCPServer(
             name="pubmed",
             url="https://glama.ai/endpoints/mp1ke6xrpi/mcp",
