@@ -82,7 +82,7 @@ class WrappedAgent(ResponsesAgent):
         ) as checkpointer:
             self.agent = self._add_memory(checkpointer)
             cc_msgs = to_chat_completions_input([i.model_dump() for i in request.input])
-            recursion_limit = (request.custom_inputs or {}).get("recursion_limit", 10)
+            recursion_limit = (request.custom_inputs or {}).get("recursion_limit", 25)
             inputs = {"messages": cc_msgs}
             thread_id = self._get_or_create_thread_id(request)
             config = {

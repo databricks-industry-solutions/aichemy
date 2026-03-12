@@ -99,7 +99,7 @@ export default function ChatPanel({
       )
     } else if (selectedWorkflow === wf[3]) {
       handleWorkflowSubmit(
-        `Use PubChem and PubMed to find safety profile of ${workflowInput}. If citing studies, please state the strength of the evidence based on the study design.`
+        `Use PubMed to find the safety profile of ${workflowInput}. If citing studies, please state the strength of the evidence based on the study design.`
       )
     }
     // Lead optimization handled by pill selection

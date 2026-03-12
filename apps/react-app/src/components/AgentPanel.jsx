@@ -47,10 +47,10 @@ export default function AgentPanel({
               ? `Error: ${agentStatus.error}`
               : agentStatus.ready
                 ? 'Agent ready'
-                : 'Agent building…'
+                : 'Agent launching…'
           } />
           <span className="agent-status-label">
-            {agentStatus.error ? 'Error' : agentStatus.ready ? 'Ready' : 'Building…'}
+            {agentStatus.error ? 'Error' : agentStatus.ready ? 'Ready' : 'Launching agent…'}
           </span>
           {agentStatus.ready && (
             <button
@@ -59,7 +59,7 @@ export default function AgentPanel({
               disabled={warmingUp}
               title="Send a warmup query to pre-warm LLM endpoints"
             >
-              {warmingUp ? '⏳' : '🔥'}
+              {warmingUp ? 'Rebooting…' : 'Reboot'}
             </button>
           )}
         </div>
@@ -126,7 +126,7 @@ function ToolCallExpander({ index, toolCall }) {
             </div>
           ))}
           {toolCall.results && (
-            <pre className="tool-results">{toolCall.results}</pre>
+            <pre className="tool-results">{toolCall.results.length > 1060 ? toolCall.results.slice(0, 1060) + '...' : toolCall.results}</pre>
           )}
         </div>
       )}
@@ -141,7 +141,7 @@ function GenieExpander({ genie, prompt }) {
     <div className="expander">
       <button className="expander-header" onClick={() => setOpen(!open)}>
         <span className="expander-title">
-          <span className="tool-badge genie">Genie:</span>
+          <span className="tool-badge genie">SQL:</span>
           <em>{prompt.slice(0, 80)}...</em>
         </span>
         <span className="chevron">{open ? '▾' : '▸'}</span>
