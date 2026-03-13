@@ -122,12 +122,13 @@ function ToolCallExpander({ index, toolCall }) {
         <div className="expander-body">
           {toolCall.parameters && Object.entries(toolCall.parameters).map(([k, v]) => (
             <div key={k} className="tool-param">
-              <strong>{k}:</strong> {v}
+              <strong>{k}:</strong> {typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v ?? '')}
             </div>
           ))}
-          {toolCall.results && (
-            <pre className="tool-results">{toolCall.results.length > 1060 ? toolCall.results.slice(0, 1060) + '...' : toolCall.results}</pre>
-          )}
+          {toolCall.results != null && (() => {
+            const text = typeof toolCall.results === 'string' ? toolCall.results : JSON.stringify(toolCall.results, null, 2)
+            return <pre className="tool-results">{text.length > 1060 ? text.slice(0, 1060) + '...' : text}</pre>
+          })()}
         </div>
       )}
     </div>

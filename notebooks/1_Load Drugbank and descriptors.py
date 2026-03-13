@@ -31,7 +31,7 @@ import os
 import mlflow
 from mlflow.models import ModelConfig
 
-cfg = ModelConfig(development_config="config.yml")
+cfg = ModelConfig(development_config="../apps/react-app/config.yml")
 
 catalog_name = cfg.get("catalog")
 schema_name = cfg.get("schema")
@@ -78,7 +78,7 @@ df.count()
 
 # COMMAND ----------
 
-from src.descriptors import smiles_to_ecfp, smiles_to_desc, fpgen
+from descriptors import smiles_to_ecfp, smiles_to_desc, fpgen
 
 smiles_to_ecfp("C1=Cc2ccccc2NN=C1", fpgen)
 
@@ -132,7 +132,7 @@ display(df_desc.limit(10))
 
 # COMMAND ----------
 
-from src.descriptors import get_selected_descriptors
+from descriptors import get_selected_descriptors
 
 selected_desc = get_selected_descriptors()
 selected_desc

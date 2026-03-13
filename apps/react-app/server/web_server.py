@@ -30,25 +30,11 @@ _app_root = Path(__file__).resolve().parent.parent
 _project_root = _app_root.parent.parent
 sys.path.insert(0, str(_app_root))
 
-from agent.utils import get_secret, init_mlflow
+from agent.utils import *
 
+load_env_from_app_yaml()
 init_mlflow()
 
-
-def get_trace(trace_id: str, retries: int = 5, delay: float = 2.0):
-    """Get a trace by its ID with retries (agent writes are async).
-    Returns the Trace object or None after all retries fail."""
-    import time
-    for attempt in range(retries):
-        try:
-            trace = mlflow.get_trace(trace_id=trace_id)
-            if trace is not None:
-                return trace
-        except Exception:
-            pass
-        if attempt < retries - 1:
-            time.sleep(delay)
-    return None
 
 # ---------------------------------------------------------------------------
 # Database layer – auto-connects to Lakebase if Databricks auth is available,

@@ -9,5 +9,7 @@ env:
     value: 30
   - name: AGENT_READ_TIMEOUT
     value: 600
+  - name: AGENT_KEEPALIVE_SECS
+    value: 600
   - name: MLFLOW_EXPERIMENT_ID
     value: 1001868044455114
