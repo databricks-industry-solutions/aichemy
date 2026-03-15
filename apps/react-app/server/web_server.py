@@ -2,6 +2,9 @@
 Backend proxy server for AiChemy React app.
 Handles Databricks authentication, proxies requests to the agent endpoint,
 and provides project persistence via SQLite (local dev) or Lakebase Postgres (production).
+
+The agent endpoint (POST /invocations) is served by agent/start_server.py (MLflow AgentServer).
+Port is set via AGENT_PORT (default 8080). Run separately: python agent/start_server.py --port <AGENT_PORT>
 """
 import os
 import re
@@ -14,12 +17,38 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Union
 from databricks.sdk import WorkspaceClient
+import sys
+import mlflow
+
+_app_root = Path(__file__).resolve().parent.parent
+_project_root = _app_root.parent.parent
+sys.path.insert(0, str(_app_root))
+
+from agent.utils import get_secret, init_mlflow
+
+init_mlflow()
+
+
+def get_trace(trace_id: str, retries: int = 5, delay: float = 2.0):
+    """Get a trace by its ID with retries (agent writes are async).
+    Returns the Trace object or None after all retries fail."""
+    import time
+    for attempt in range(retries):
+        try:
+            trace = mlflow.get_trace(trace_id=trace_id)
+            if trace is not None:
+                return trace
+        except Exception:
+            pass
+        if attempt < retries - 1:
+            time.sleep(delay)
+    return None
 
 # ---------------------------------------------------------------------------
 # Database layer – auto-connects to Lakebase if Databricks auth is available,
@@ -49,6 +78,7 @@ class ProjectDB:
         self._lakebase_token: Optional[str] = None
         self._lakebase_user: Optional[str] = None
         self._sp_client: Optional[WorkspaceClient] = None
+        self._host: Optional[str] = None
 
     def init(self):
         """Initialize DB — call after WorkspaceClient is available."""
@@ -93,29 +123,26 @@ class ProjectDB:
                 f"/branches/{self._lakebase_branch_id}"
                 f"/endpoints/{self._lakebase_endpoint_id}"
             )
-            host = cfg.get("host")
+            self._host = cfg.get("host")
 
             # 2. Get SP credentials: env vars (Databricks Apps) > secrets API (local dev)
-            sp_client_id = os.getenv("SP_CLIENT_ID")
-            sp_client_secret = os.getenv("SP_CLIENT_SECRET")
+            sp_client_id = get_secret(scope='aichemy', key='client_id')
+            sp_client_secret = get_secret(scope='aichemy', key='client_secret')
 
-            if sp_client_id and sp_client_secret:
-                print("[ProjectDB] SP credentials from environment variables")
-            else:
-                from base64 import b64decode
-                w = _get_workspace_client()
-                sp_id_b64 = w.secrets.get_secret("aichemy", "client_id").value
-                sp_secret_b64 = w.secrets.get_secret("aichemy", "client_secret").value
-                sp_client_id = b64decode(sp_id_b64).decode("utf-8")
-                sp_client_secret = b64decode(sp_secret_b64).decode("utf-8")
-                print("[ProjectDB] SP credentials from secrets API")
+            if not (sp_client_id and sp_client_secret):
+                print("[ProjectDB] SP credentials missing from Databricks secrets. Skipping Lakebase.")
+                return False
 
             # 3. Create SP-authenticated client
             sp_client = WorkspaceClient(
-                host=host,
+                host=self._host,
                 client_id=sp_client_id,
                 client_secret=sp_client_secret,
             )
+            print(f"[ProjectDB] SP client: {sp_client}")
+
+            # Cache the SP client for token refresh
+            self._sp_client = sp_client
 
             # 4. Resolve endpoint host via Lakebase Autoscaling API
             endpoint = sp_client.postgres.get_endpoint(name=self._lakebase_endpoint_name)
@@ -126,10 +153,8 @@ class ProjectDB:
             cred = sp_client.postgres.generate_database_credential(
                 endpoint=self._lakebase_endpoint_name,
             )
-            self._lakebase_token = cred.token
-
-            # Cache the SP client for token refresh
-            self._sp_client = sp_client
+            # self._lakebase_token = cred.token
+            self._lakebase_token = get_secret(scope='aichemy', key='lakebase_as')
 
             # 6. Test the connection (retry for scale-to-zero wake-up)
             import psycopg
@@ -375,7 +400,7 @@ app = FastAPI(title="AiChemy API Proxy")
 # CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:8080", "http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -408,7 +433,9 @@ DATABRICKS_HOST = _resolve_databricks_host()
 
 def _get_workspace_client() -> WorkspaceClient:
     global _workspace_client
-    if _workspace_client is None:
+    try:
+        _workspace_client = db._sp_client
+    except Exception as e:
         kwargs = {}
         if DATABRICKS_HOST:
             kwargs["host"] = DATABRICKS_HOST
@@ -490,6 +517,7 @@ class AgentRequest(BaseModel):
     input: List[Message]
     custom_inputs: CustomInputs
     skill_name: Optional[str] = None  # When set, wraps the prompt with skill instructions
+    new_thread: Optional[bool] = None  # True = first message in thread; only then stream every item
 
 class CreateProjectRequest(BaseModel):
     name: str
@@ -504,87 +532,18 @@ class UpdateProjectRequest(BaseModel):
 # Agent proxy endpoint
 # Set MOCK_AGENT=1 to return a canned response (for local dev without Databricks auth)
 # ---------------------------------------------------------------------------
-
-MOCK_AGENT = os.getenv("MOCK_AGENT", "0") == "1"
-
-@app.post("/api/agent")
-async def call_agent(request: AgentRequest):
-    """Proxy request to Databricks agent endpoint (or return mock response)."""
-    # --- Mock mode for local development ---
-    if MOCK_AGENT:
-        user_text = request.input[-1].content if request.input else ""
-        return {
-            "output": [
-                {
-                    "type": "message",
-                    "content": [
-                        {"type": "text", "text": f"[mock] You asked: \"{user_text}\". This is a mock response because the server is running in local dev mode (MOCK_AGENT=1). Connect to Databricks for real agent responses."}
-                    ],
-                }
-            ]
-        }
-
-    # --- Production: proxy to Databricks serving endpoint ---
-    try:
-        messages = [{"role": msg.role, "content": msg.content} for msg in request.input]
-        if request.skill_name and messages:
-            last_msg = messages[-1]
-            enhanced = build_prompt_with_skill(last_msg["content"], request.skill_name)
-            messages[-1] = {"role": last_msg["role"], "content": enhanced}
-
-        input_dict = {
-            "input": messages,
-            "custom_inputs": {"thread_id": request.custom_inputs.thread_id},
-            "databricks_options": {"return_trace": True},
-        }
-
-        endpoint = os.getenv("SERVING_ENDPOINT", "aichemy")
-        w = _get_workspace_client()
-
-        # Get the workspace host and build the URL
-        host = w.config.host.rstrip('/')
-        url = f"{host}/serving-endpoints/{endpoint}/invocations"
-
-        # Get authentication headers from the SDK
-        headers = w.config.authenticate()
-        headers["Content-Type"] = "application/json"
-
-        # Make the request
-        response = requests.post(url=url, headers=headers, json=input_dict)
-
-        if response.status_code != 200:
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"{response.status_code} Error: {response.text}"
-            )
-
-        raw = response.json()
-
-        # Tool calls come from ALL messages; display text is the last (supervisor) only
-        all_tool_calls = extract_all_tool_calls(raw)
-        text_contents = extract_text_content(raw)
-        cleaned_text = ""
-        if text_contents:
-            cleaned_text = strip_tool_call_tags(text_contents[0])
-        genie_results = parse_genie_results(raw)
-
-        return {
-            **raw,
-            "parsed": {
-                "text": cleaned_text or "No response. Retry or reset the chat.",
-                "tool_calls": all_tool_calls,
-                "genie": genie_results,
-            },
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+# Agent server: agent/start_server.py (MLflow AgentServer) listens on 8080 /invocations.
+# This backend proxies /api/agent and /api/agent/stream to that endpoint.
 # ---------------------------------------------------------------------------
-# Streaming agent endpoint — streams text chunks via SSE
-# ---------------------------------------------------------------------------
+# Entry point for the MLflow agent (run with: python agent/start_server.py --port <AGENT_PORT>)
+AGENT_PORT = os.getenv("AGENT_PORT", "8080")
+AGENT_URL = f"http://0.0.0.0:{AGENT_PORT}/invocations"
+# Timeout for web server -> agent requests (seconds). Prevents indefinite hang and generic "network error".
+# Split into (connect, read): short connect timeout, longer read timeout for slow MCP/Genie queries.
+AGENT_CONNECT_TIMEOUT = int(os.getenv("AGENT_CONNECT_TIMEOUT", "30"))
+AGENT_READ_TIMEOUT = int(os.getenv("AGENT_READ_TIMEOUT", "600"))
+AGENT_REQUEST_TIMEOUT = AGENT_CONNECT_TIMEOUT + AGENT_READ_TIMEOUT
+
 
 @app.post("/api/agent/stream")
 async def call_agent_stream(request: AgentRequest):
@@ -592,28 +551,19 @@ async def call_agent_stream(request: AgentRequest):
     
     Each SSE event is a JSON object with a `type` field:
       - {"type": "text", "content": "..."} — a text chunk to append
-      - {"type": "tool_calls", "data": [...]}  — parsed tool calls
-      - {"type": "genie", "data": [...]}       — parsed genie SQL results
+      - {"type": "trace_id", "trace_id": "tr-..."} — trace id
+    # Not in streamed response
+    #   - {"type": "tool_calls", "data": [...]}  — parsed tool calls
+    #   - {"type": "genie", "data": [...]}       — parsed genie SQL results
       - {"type": "done"}                       — stream complete
-      - {"type": "error", "content": "..."}    — error occurred
+    # Not in streamed response
+    #  - {"type": "error", "content": "..."}    — error occurred
     """
-    if MOCK_AGENT:
-        user_text = request.input[-1].content if request.input else ""
-        async def mock_stream():
-            import asyncio
-            words = f"[mock] You asked: \"{user_text}\". This is a streaming mock response.".split()
-            for word in words:
-                yield f"data: {json.dumps({'type': 'text', 'content': word + ' '})}\n\n"
-                await asyncio.sleep(0.05)
-            yield f"data: {json.dumps({'type': 'done'})}\n\n"
-        return StreamingResponse(mock_stream(), media_type="text/event-stream")
 
     def _sse(event: dict) -> str:
         return f"data: {json.dumps(event)}\n\n"
 
     def stream_generator():
-        import time
-
         try:
             # If skills are enabled, wrap the user prompt with skill instructions
             messages = [{"role": msg.role, "content": msg.content} for msg in request.input]
@@ -626,53 +576,171 @@ async def call_agent_stream(request: AgentRequest):
                 "input": messages,
                 "custom_inputs": {"thread_id": request.custom_inputs.thread_id},
                 "databricks_options": {"return_trace": True},
+                "stream": True,
             }
 
-            endpoint = os.getenv("SERVING_ENDPOINT", "aichemy")
+            print(f"Input_dict: {input_dict}")
             w = _get_workspace_client()
-            host = w.config.host.rstrip('/')
-            url = f"{host}/serving-endpoints/{endpoint}/invocations"
+            url = AGENT_URL
             headers = w.config.authenticate()
             headers["Content-Type"] = "application/json"
+            headers["x-mlflow-return-trace-id"] = "true"
 
             yield _sse({"type": "status", "content": "Waiting for agent..."})
 
-            resp = requests.post(url=url, headers=headers, json=input_dict)
+            try:
+                resp = requests.post(
+                    url=url, headers=headers, json=input_dict, timeout=AGENT_REQUEST_TIMEOUT, stream=True
+                )
+            except requests.exceptions.Timeout:
+                yield _sse({
+                    "type": "error",
+                    "content": f"Agent request timed out after {AGENT_READ_TIMEOUT}s. Try again or increase AGENT_READ_TIMEOUT.",
+                })
+                return
 
             if resp.status_code != 200:
-                yield _sse({"type": "error", "content": f"{resp.status_code}: {resp.text[:500]}"})
+                body = resp.text if not resp.raw.closed else ""
+                yield _sse({"type": "error", "content": f"{resp.status_code}: {body[:500]}"})
                 return
 
             yield _sse({"type": "status", "content": "Streaming response..."})
 
-            raw = resp.json()
-            all_tool_calls = extract_all_tool_calls(raw)
-            text_contents = extract_text_content(raw)
-            cleaned_text = ""
-            if text_contents:
-                cleaned_text = strip_tool_call_tags(text_contents[0])
+            # Agent returns SSE: data: {"type": "response.output_item.done", "item": {...}},
+            # data: {"trace_id": "tr-..."}, then data: [DONE]
+            # With the same thread_id the agent may resend all prior turns; only stream the last item (current turn).
+            # For a new thread (new_thread=True) we stream every item as it arrives (no prior turns to skip).
+            is_new_thread = request.new_thread is True
+            accumulated_output = []
+            trace_id = None
 
-            # Stream the text word-by-word for typewriter effect
-            if cleaned_text:
-                words = cleaned_text.split(' ')
-                for i, word in enumerate(words):
-                    chunk = word + (' ' if i < len(words) - 1 else '')
-                    yield _sse({"type": "text", "content": chunk})
-                    time.sleep(0.02)
+            for line in resp.iter_lines(decode_unicode=True):
+                if line is None:
+                    continue
+                line = line.strip()
+                if not line.startswith("data: "):
+                    continue
+                payload = line[6:].strip()
+                if not payload:
+                    continue
+                if payload == "[DONE]":
+                    break
+                try:
+                    event = json.loads(payload)
+                except json.JSONDecodeError:
+                    continue
+                ev_type = event.get("type")
+                if ev_type == "response.output_item.done":
+                    item = event.get("item")
+                    if item:
+                        accumulated_output.append(item)
+                        if is_new_thread:
+                            yield from stream_new_content(item, _sse)
+                elif ev_type == "error":
+                    yield _sse({"type": "error", "content": event.get("message", str(event))})
+                    return
+                elif "trace_id" in event:
+                    trace_id = event["trace_id"]
 
-            if all_tool_calls:
-                yield _sse({"type": "tool_calls", "data": all_tool_calls})
+            # If the stream ended without any output, the agent likely errored out
+            if not accumulated_output:
+                yield _sse({"type": "error", "content": "Agent stream ended without producing output. Check agent logs for details."})
 
-            genie_results = parse_genie_results(raw)
-            if genie_results:
-                yield _sse({"type": "genie", "data": genie_results})
+            # Response fully consumed — use trace_id from stream if present
+            if trace_id:
+                print(f"trace_id: {trace_id}")
 
+            # Existing thread: stream only the last message item to avoid repeating previous responses
+            if not is_new_thread and accumulated_output:
+                last_msg = next(
+                    (it for it in reversed(accumulated_output)
+                     if it.get("type") == "message"
+                     and any(b.get("type") == "output_text" for b in it.get("content") or [])),
+                    accumulated_output[-1],
+                )
+                yield from stream_new_content(last_msg, _sse)
+
+            # Parse the trace for tool_calls and genie results
+            if trace_id:
+                trace = get_trace(trace_id, retries=3, delay=1.0)
+                if trace:
+                    parsed = parse_trace_for_ui(_serialize_trace(trace))
+                    print(f"parsed: {parsed}")
+                    if parsed["tool_calls"]:
+                        yield _sse({"type": "tool_calls", "data": parsed["tool_calls"]})
+                    if parsed["genie_results"]:
+                        yield _sse({"type": "genie", "data": parsed["genie_results"]})
+                yield _sse({"type": "trace_id", "trace_id": trace_id})
+
+        except requests.exceptions.ConnectionError as e:
+            yield _sse({"type": "error", "content": f"Lost connection to agent server: {e}"})
         except Exception as e:
-            yield _sse({"type": "error", "content": str(e)})
+            yield _sse({"type": "error", "content": f"{type(e).__name__}: {e}"})
 
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
     return StreamingResponse(stream_generator(), media_type="text/event-stream")
+
+
+# ---------------------------------------------------------------------------
+# MLflow Trace endpoint
+# ---------------------------------------------------------------------------
+
+def _safe_json(obj):
+    """Convert an object to a JSON-safe value. Falls back to str() for unpicklable objects."""
+    if obj is None:
+        return None
+    try:
+        json.dumps(obj)
+        return obj
+    except (TypeError, ValueError, OverflowError):
+        try:
+            return str(obj)
+        except Exception:
+            return "<unserializable>"
+
+
+def _serialize_trace(trace) -> dict:
+    """Convert an MLflow Trace object to a JSON-serializable dict."""
+    info = trace.info
+    spans = []
+    for s in (trace.data.spans if trace.data else []):
+        attrs = {}
+        try:
+            for k, v in (s.attributes or {}).items():
+                attrs[str(k)] = _safe_json(v)
+        except Exception:
+            pass
+        spans.append({
+            "name": getattr(s, "name", None),
+            "span_id": getattr(s, "span_id", None),
+            "parent_id": getattr(s, "parent_id", None),
+            "status": str(getattr(s, "status", "")),
+            "start_time_ns": getattr(s, "start_time_ns", None),
+            "end_time_ns": getattr(s, "end_time_ns", None),
+            "inputs": _safe_json(getattr(s, "inputs", None)),
+            "outputs": _safe_json(getattr(s, "outputs", None)),
+            "attributes": attrs,
+        })
+    return {
+        "trace_id": getattr(info, "trace_id", None),
+        "status": str(getattr(info, "state", "")),
+        "execution_time_ms": getattr(info, "execution_duration", None),
+        "request_time": getattr(info, "request_time", None),
+        "tags": dict(info.tags) if getattr(info, "tags", None) else {},
+        "spans": spans,
+    }
+
+
+@app.get("/api/trace/{trace_id}")
+async def api_get_trace(trace_id: str):
+    """Fetch an MLflow trace by ID (with retries for async write delay)."""
+    import asyncio
+    loop = asyncio.get_running_loop()
+    trace = await loop.run_in_executor(None, get_trace, trace_id)
+    if trace is None:
+        raise HTTPException(status_code=404, detail=f"Trace '{trace_id}' not found after retries")
+    return _serialize_trace(trace)
 
 
 # ---------------------------------------------------------------------------
@@ -723,28 +791,6 @@ async def delete_project(project_id: str):
 # ---------------------------------------------------------------------------
 # Response parsing helpers (mirrors Streamlit utils.py)
 # ---------------------------------------------------------------------------
-
-def parse_tool_calls(text_content: str) -> list[dict]:
-    """Parse <function_calls> and <thinking> blocks from text content."""
-    tool_calls = []
-    function_calls_blocks = re.findall(
-        r'<function_calls>\s*(.*?)\s*</function_calls>', text_content, re.DOTALL
-    )
-    thinking_blocks = re.findall(
-        r'<thinking>\s*(.*?)\s*</thinking>', text_content, re.DOTALL
-    )
-    for block in function_calls_blocks:
-        invokes = re.findall(r'<invoke name="([^"]+)">\s*(.*?)\s*</invoke>', block, re.DOTALL)
-        for function_name, params_block in invokes:
-            params = re.findall(r'<parameter name="([^"]+)">([^<]*)</parameter>', params_block)
-            parameters = {n: v.strip() for n, v in params}
-            tool_calls.append({"function_name": function_name, "parameters": parameters, "thinking": None})
-    for i, thinking in enumerate(thinking_blocks):
-        if i < len(tool_calls):
-            tool_calls[i]["thinking"] = thinking.strip()
-    return tool_calls
-
-
 def strip_tool_call_tags(text_content: str) -> str:
     """Strip <function_calls>, <thinking>, and <results> tags from text."""
     text_content = re.sub(r'<function_calls>.*?</function_calls>', '', text_content, flags=re.DOTALL)
@@ -755,25 +801,41 @@ def strip_tool_call_tags(text_content: str) -> str:
     return text_content.strip()
 
 
-def parse_genie_results(response_json: dict) -> list[dict]:
-    """Extract poll_query_results from databricks_output trace spans."""
+def stream_new_content(item: Optional[dict], _sse):
+    """Yield SSE events for one response item's text in chunks. Skips tool-call tags."""
+    import time
+    if not item:
+        return
+    for block in item.get("content") or []:
+        if block.get("type") == "output_text":
+            text = block.get("text") or ""
+            if text:
+                cleaned = strip_tool_call_tags(text)
+                if cleaned:
+                    words = cleaned.split(" ")
+                    for i, word in enumerate(words):
+                        chunk = word + (" " if i < len(words) - 1 else "")
+                        yield _sse({"type": "text", "content": chunk})
+                        time.sleep(0.02)
+
+
+def parse_genie_results(trace_dict: dict) -> list[dict]:
+    """Extract Genie query results from poll_query_results spans in a serialized trace.
+
+    Accepts the dict returned by _serialize_trace() (spans at top level,
+    outputs already deserialized).
+    """
     results = []
-    try:
-        spans = response_json.get("databricks_output", {}).get("trace", {}).get("data", {}).get("spans", [])
-    except (AttributeError, KeyError):
-        return results
-    for span in spans:
-        if span.get("name") == "poll_query_results":
-            span_outputs = span.get("attributes", {}).get("mlflow.spanOutputs", "{}")
-            try:
-                outputs = json.loads(json.loads(span_outputs))
-                results.append({
-                    "result": outputs.get("result", ""),
-                    "query": outputs.get("query", ""),
-                    "description": outputs.get("description", ""),
-                })
-            except (json.JSONDecodeError, TypeError):
-                continue
+    for span in trace_dict.get("spans", []):
+        if span.get("name") != "poll_query_results":
+            continue
+        outputs = span.get("outputs")
+        if isinstance(outputs, dict) and outputs.get("result"):
+            results.append({
+                "result": outputs.get("result", ""),
+                "query": outputs.get("query", ""),
+                "description": outputs.get("description", ""),
+            })
     return results
 
 
@@ -793,15 +855,52 @@ def extract_text_content(response_json: dict) -> list[str]:
     return [last_text] if last_text else []
 
 
-def extract_all_tool_calls(response_json: dict) -> list[dict]:
-    """Extract tool calls from ALL message outputs (not just the last one)."""
+def extract_all_tool_calls(trace_dict: dict) -> list[dict]:
+    """Extract tool calls from a serialized trace.
+
+    Checks three sources (in order):
+    1. Spans named ``"tools"`` whose ``inputs`` contain a ``tool_call`` dict
+       with ``name`` and ``args`` (OpenAI Responses-style traces).
+    2. Message text in the root span's outputs for ``<function_calls>`` XML
+       blocks (Claude-style traces).
+    3. Direct child spans of the root, treated as function invocations
+       (fallback for other span layouts).
+    """
     all_tool_calls = []
-    for item in response_json.get("output", []):
-        if item.get("type") == "message":
-            text = item.get("content", [{}])[0].get("text")
-            if text:
-                all_tool_calls.extend(parse_tool_calls(text))
+    spans = trace_dict.get("spans", [])
+
+    for span in spans:
+        if span.get("name") == "tools":
+            inputs = span.get("inputs", {})
+            tool_call = inputs.get("tool_call")
+            if isinstance(tool_call, dict):
+                tc_name = tool_call.get("name")
+                try:
+                    results = span.get("outputs").get("messages")[0].get("content")
+                except Exception:
+                    results = None
+                if tool_call.get("args", {})=={} and results is None:
+                    continue
+                else:
+                    all_tool_calls.append({
+                        "function_name": tc_name,
+                        "parameters": tool_call.get("args"),
+                        "results": results
+                    })
     return all_tool_calls
+
+
+def parse_trace_for_ui(trace_dict: dict) -> dict:
+    """Parse a serialized trace for tool_calls and genie_results.
+
+    ``trace_dict`` is the dict returned by ``_serialize_trace()`` (or the
+    ``/api/trace/<id>`` endpoint).  Returns a dict with ``tool_calls`` and
+    ``genie_results`` lists ready for SSE emission.
+    """
+    return {
+        "tool_calls": extract_all_tool_calls(trace_dict),
+        "genie_results": parse_genie_results(trace_dict),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1008,6 +1107,36 @@ async def health_check():
     return result
 
 # ---------------------------------------------------------------------------
+# Agent status + warmup — proxied from the AgentServer
+# ---------------------------------------------------------------------------
+
+@app.get("/api/agent/status")
+async def agent_status():
+    """Proxy agent readiness check to the AgentServer."""
+    try:
+        resp = requests.get(
+            f"http://0.0.0.0:{AGENT_PORT}/agent-status",
+            timeout=5,
+        )
+        return resp.json()
+    except Exception:
+        return {"ready": False, "building": True, "error": None}
+
+
+@app.post("/api/agent/warmup")
+async def agent_warmup():
+    """Trigger a warmup query on the AgentServer."""
+    try:
+        resp = requests.post(
+            f"http://0.0.0.0:{AGENT_PORT}/agent-warmup",
+            timeout=10,
+        )
+        return resp.json()
+    except Exception as e:
+        return {"ok": False, "detail": str(e)}
+
+
+# ---------------------------------------------------------------------------
 # Lakebase diagnostic endpoint — step-by-step connection test
 # ---------------------------------------------------------------------------
 
@@ -1117,7 +1246,8 @@ async def debug_lakebase(request: Request):
 # Must be mounted LAST so /api routes take priority.
 # ---------------------------------------------------------------------------
 
-_dist_dir = Path(__file__).resolve().parent.parent / "dist"
+_dist_dir = _app_root / "dist"
+
 if _dist_dir.exists():
     app.mount("/assets", StaticFiles(directory=_dist_dir / "assets"), name="static-assets")
 
@@ -1128,8 +1258,19 @@ if _dist_dir.exists():
         if full_path and file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
         return FileResponse(_dist_dir / "index.html")
+else:
+    # No dist/ — e.g. backend-only or frontend not built yet. Avoid 404 on /
+    @app.get("/")
+    async def root_no_dist():
+        return HTMLResponse(
+            "<!DOCTYPE html><html><head><title>AiChemy</title></head><body>"
+            "<h1>AiChemy backend</h1><p>React frontend not built. "
+            "Run <code>npm run build</code> in the app directory, or use the API:</p>"
+            "<ul><li><a href='/api/health'>/api/health</a></li>"
+            "<li><a href='/api/projects'>/api/projects</a></li></ul></body></html>"
+        )
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("DATABRICKS_APP_PORT", "8000"))
+    port = int(os.getenv("DATABRICKS_APP_PORT", "8010"))
     uvicorn.run(app, host="0.0.0.0", port=port)

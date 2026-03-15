@@ -99,7 +99,7 @@ export default function ChatPanel({
       )
     } else if (selectedWorkflow === wf[3]) {
       handleWorkflowSubmit(
-        `Use PubChem and PubMed to find safety profile of ${workflowInput}. If citing studies, please state the strength of the evidence based on the study design.`
+        `Use PubMed to find the safety profile of ${workflowInput}. If citing studies, please state the strength of the evidence based on the study design.`
       )
     }
     // Lead optimization handled by pill selection
@@ -129,7 +129,22 @@ export default function ChatPanel({
             </div>
             <div className="message-content">
               {msg.role === 'assistant' ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                <>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                  {msg.traceId && (
+                    <div className="trace-id-row">
+                      <a
+                        className="trace-link"
+                        href={`${import.meta.env.VITE_API_URL || ''}/api/trace/${msg.traceId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        title={`View trace ${msg.traceId}`}
+                      >
+                        {msg.traceId}
+                      </a>
+                    </div>
+                  )}
+                </>
               ) : (
                 msg.content
               )}

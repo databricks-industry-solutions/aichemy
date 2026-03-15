@@ -49,8 +49,8 @@ client_id, client_secret = get_SP_credentials(
     client_id_key='client_id', #if retrieving secrets (but doesn't work with mlflow logging)
     client_secret_key='client_secret', #if retrieving secrets (but doesn't work with mlflow logging)
     # must provide hardcoded values as mlflow log_model cannot retrieve secrets
-    client_id_value = "client_id", # Hardcode client_id if any
-    client_secret_value = "client_secret" # Hardcode client_secret if any
+    # client_id_value = "client_id", # Hardcode client_id if any
+    # client_secret_value = "client_secret" # Hardcode client_secret if any
 )
 ws_client = WorkspaceClient(
     host=cfg.get("host"),
@@ -186,11 +186,10 @@ mcp_client = DatabricksMultiServerMCPClient(
             workspace_client=ws_client,
             terminate_on_close=False
         ),
-        DatabricksMCPServer(
-            name="opentargets",
-            url=f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("opentargets")}',
-            workspace_client=ws_client
-        ),
+        # MCPServer(
+        #     name="opentargets",
+        #     url="https://mcp.platform.opentargets.org/mcp"
+        # )
     ]
 )
 
@@ -230,30 +229,43 @@ mcp_agent = create_agent(
 
 # COMMAND ----------
 
-# # 42 sec when using MultiServerMCPClient vs 1.88 min databricks-mcp
-# input_example = {
-#     "messages": [
-#         {
-#             "role": "user",
-#             "content": "What is the cid of aspirin?"
-#         }
-#     ]
-# }
-# await mcp_agent.ainvoke(input_example)
+# 42 sec when using MultiServerMCPClient vs 1.88 min databricks-mcp
+input_example = {
+    "messages": [
+        {
+            "role": "user",
+            "content": "What is the cid of aspirin?"
+        }
+    ]
+}
+await mcp_agent.ainvoke(input_example)
 
 # COMMAND ----------
 
 # DBTITLE 1,Cell 25
 from langgraph_supervisor import create_supervisor
 
-supervisor_prompt = """You are a supervisor managing 4 agents. Route according to the agent required to fulfill the request.
+supervisor_prompt = """You are a supervisor managing 4 agents. Route to the agent required to fulfill the request.
 1. Drugbank agent: generates text-to-SQL queries to Drugbank of FDA-approved drugs and their properties
 2. ZINC agent: searches for drug-like molecules and their properties from the ZINC database based on ECFP4 molecular fingerprint embeddings represented as a 1024-char bitstring.
 3. Chem utilities agent: display molecule image PNG files from PubChem website by CID in markdown or compute ECFP4 molecular fingerprint embeddings in a 1024-char bitstring for a given SMILES structure. If missing SMILES input, query it from a chemical name using the PubChem MCP agent's search_compound tool.
 4. MCP agent: connects to the PubChem, PubMed and OpenTargets MCP servers
 
-Because you are an autonomous multi-agent system, do not ask for more follow up information. Instead, use chain-of-thought to reason and break down the request into
-achievable steps based on the agentic tools that you have access to. 
+Because you are an autonomous multi-agent system, do not ask for more follow up information.
+Instead, use chain-of-thought to reason and break down the request into achievable steps
+based on the agentic tools that you have access to.
+
+CRITICAL RULES — FOLLOW EXACTLY:
+1. PASS THROUGH RESULTS: When a sub-agent returns data (tables, query results, search results),
+that IS the final answer. Tables and structured data do NOT need summarisation.
+NEVER fabricate, extend, or add rows/data that were not in the sub-agent's output.
+2. ONE CALL PER AGENT PER STEP: NEVER route to the same agent twice for the same sub-task.
+Once an agent returns a result, that result is COMPLETE. Do NOT re-route to the same agent
+to rephrase, summarise, or improve the answer unless another tool is required.
+3. TERMINATE IMMEDIATELY: After a sub-agent returns data for a single-step request,
+FINISH your turn. Do NOT hand off to any agent again.
+4. For MULTI-STEP requests (e.g. 'find similar molecules to semaglutide'), route to
+DIFFERENT agents in sequence — never the same agent twice."
 """
 
 workflow = create_supervisor(
@@ -274,12 +286,15 @@ workflow = create_supervisor(
 
 # COMMAND ----------
 
-#qstring = "Show the aspirin molecule. First get its CID, then get the PubChem image URL based on the CID."
-#workflow.compile().invoke({"messages": [{"role": "user", "content": qstring}]})
+qstring = "Show the aspirin molecule. First get its CID, then get the PubChem image URL based on the CID."
 
 # COMMAND ----------
 
-# await workflow.compile().ainvoke({"messages": [{"role": "user", "content": qstring}]})
+# workflow.compile().invoke({"messages": [{"role": "user", "content": qstring}]})
+
+# COMMAND ----------
+
+# await workflow.compile().ainvoke({"messages": [{"role": "user", "content": "What is the CID of danuglipron"}]})
 
 # COMMAND ----------
 
@@ -307,26 +322,16 @@ mlflow.models.set_model(agent)
 
 # COMMAND ----------
 
-# from uuid import uuid4
-# import nest_asyncio
-# nest_asyncio.apply()
+from uuid import uuid4
+import nest_asyncio
+nest_asyncio.apply()
 
-# thread_id = str(uuid4())
-# inputs = {
-#     "input": [{"role": "user", "content": "What is the ENSEMBL ID of GLP-1"}], 
-#     "custom_inputs": {"thread_id": thread_id}
-# }
-# response1 = agent.predict(inputs)
-# response1
-
-# COMMAND ----------
-
-# thread_id = str(uuid4())
-# inputs = {
-#     "input": [{"role": "user", "content": "What is the CID of aspirin?"}], 
-#     "custom_inputs": {"thread_id": thread_id}
-# }
-# response1 = agent.predict(inputs)
+thread_id = str(uuid4())
+inputs = {
+    "input": [{"role": "user", "content": "What is the CID of aspirin?"}], 
+    "custom_inputs": {"thread_id": thread_id}
+}
+response1 = agent.predict(inputs)
 
 # COMMAND ----------
 

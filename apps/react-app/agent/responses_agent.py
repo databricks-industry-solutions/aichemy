@@ -1,0 +1,157 @@
+import asyncio
+import json
+import logging
+from uuid import uuid4
+from typing import Annotated, Any, AsyncGenerator, Generator, Optional, Sequence
+
+from databricks.sdk import WorkspaceClient
+from databricks_langchain import AsyncCheckpointSaver
+from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.messages.tool import ToolMessage
+from mlflow.pyfunc import ResponsesAgent
+from mlflow.types.responses import (
+    ResponsesAgentRequest,
+    ResponsesAgentResponse,
+    ResponsesAgentStreamEvent,
+    output_to_responses_items_stream,
+    to_chat_completions_input,
+)
+from langgraph.graph.state import StateGraph
+
+logger = logging.getLogger(__name__)
+
+
+class WrappedAgent(ResponsesAgent):
+    """ResponsesAgent wrapper with optional Lakebase memory via AsyncCheckpointSaver."""
+
+    def __init__(
+        self,
+        workflow: StateGraph,
+        workspace_client: Optional[WorkspaceClient] = None,
+        lakebase_instance: Optional[str] = None,
+    ):
+        self.workflow = workflow
+        self.workspace_client = workspace_client or WorkspaceClient()
+        self.lakebase_instance = lakebase_instance
+
+    def _add_memory(self, checkpointer: AsyncCheckpointSaver):
+        if self.workflow is not None and checkpointer is not None:
+            return self.workflow.compile(checkpointer=checkpointer)
+        elif self.workflow is not None and checkpointer is None:
+            # No memory
+            print("No checkpointer found so compiling workflow without memory")
+            return self.workflow.compile()
+
+    def _get_or_create_thread_id(self, request: ResponsesAgentRequest) -> str:
+        """Get thread_id from request or create a new one.
+
+        Priority:
+        1. thread_id from custom_inputs
+        2. conversation_id from chat context
+        3. New UUID
+        """
+        ci = dict(request.custom_inputs or {})
+        if "thread_id" in ci:
+            return ci["thread_id"]
+        if request.context and getattr(request.context, "conversation_id", None):
+            return request.context.conversation_id
+        return str(uuid4())
+
+    # Make a prediction (single-step) for the agent
+    def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
+        seen_ids: set[str] = set()
+        outputs = []
+        for event in self.predict_stream(request):
+            if event.type == "response.output_item.done" or event.type == "error":
+                item_id = getattr(event.item, "id", None)
+                if item_id and item_id in seen_ids:
+                    continue
+                if item_id:
+                    seen_ids.add(item_id)
+                outputs.append(event.item)
+        return ResponsesAgentResponse(output=outputs, custom_outputs=request.custom_inputs)
+
+    
+    async def _predict_stream_async(
+        self,
+        request: ResponsesAgentRequest,
+    ) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
+        async with AsyncCheckpointSaver(
+            instance_name=self.lakebase_instance,
+            workspace_client=self.workspace_client,
+        ) as checkpointer:
+            self.agent = self._add_memory(checkpointer)
+            cc_msgs = to_chat_completions_input([i.model_dump() for i in request.input])
+            recursion_limit = (request.custom_inputs or {}).get("recursion_limit", 25)
+            inputs = {"messages": cc_msgs}
+            thread_id = self._get_or_create_thread_id(request)
+            config = {
+                "configurable": {"thread_id": thread_id},
+                "recursion_limit": recursion_limit,
+            }
+
+            # Stream node-level updates only (not individual LLM tokens via "messages"
+            # mode, which would leak the supervisor's intermediate reasoning/hallucinations).
+            seen_msg_ids: set[str] = set()
+            seen_item_ids: set[str] = set()
+
+            try:
+                async for event in self.agent.astream(
+                    inputs, config=config, stream_mode="updates"
+                ):
+                    for node_name, node_data in event.items():
+                        if node_data is None or not isinstance(node_data, dict):
+                            continue
+                        # Skip the supervisor's own messages — they may contain
+                        # hallucinated summaries. The graph's output_mode="last_message"
+                        # ensures the sub-agent's final answer is the authoritative output;
+                        # honour that by only surfacing sub-agent messages.
+                        if node_name == "supervisor":
+                            continue
+                        if len(node_data.get("messages", [])) > 0:
+                            unique_messages = []
+                            for msg in node_data["messages"]:
+                                msg_id = getattr(msg, "id", None)
+                                if msg_id and msg_id in seen_msg_ids:
+                                    continue
+                                if msg_id:
+                                    seen_msg_ids.add(msg_id)
+                                if isinstance(msg, ToolMessage) and not isinstance(msg.content, str):
+                                    msg.content = json.dumps(msg.content)
+                                unique_messages.append(msg)
+                            for item in output_to_responses_items_stream(unique_messages):
+                                item_id = getattr(item, "item_id", None) or (
+                                    getattr(item, "item", None) and getattr(item.item, "id", None)
+                                )
+                                if item_id and item_id in seen_item_ids:
+                                    continue
+                                if item_id:
+                                    seen_item_ids.add(item_id)
+                                yield item
+            except Exception as e:
+                logger.exception("Error during agent streaming")
+                error_msg = AIMessage(content=f"**Agent error:** `{type(e).__name__}`: {e}")
+                for item in output_to_responses_items_stream([error_msg]):
+                    yield item
+
+    # Stream predictions for the agent, yielding output as it's generated
+    def predict_stream(
+        self, request: ResponsesAgentRequest
+    ) -> Generator[ResponsesAgentStreamEvent, None, None]:
+        agen = self._predict_stream_async(request)
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        ait = agen.__aiter__()
+
+        while True:
+            try:
+                item = loop.run_until_complete(ait.__anext__())
+            except StopAsyncIteration:
+                break
+            else:
+                yield item

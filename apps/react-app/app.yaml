@@ -1,10 +1,13 @@
 command:
-  - python
-  - server/server.py
+  - uv
+  - run
+  - start.py
 env:
-  - name: SERVING_ENDPOINT
-    value: aichemy
-  - name: SP_CLIENT_ID
-    valueFrom: secret
-  - name: SP_CLIENT_SECRET
-    valueFrom: secret-2
+  - name: AGENT_PORT
+    value: 8080
+  - name: AGENT_CONNECT_TIMEOUT
+    value: 30
+  - name: AGENT_READ_TIMEOUT
+    value: 600
+  - name: MLFLOW_EXPERIMENT_ID
+    value: 1001868044455114

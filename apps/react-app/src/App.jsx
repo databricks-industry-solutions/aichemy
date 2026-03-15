@@ -236,9 +236,13 @@ export default function App() {
     setAbortController(controller)
 
     try {
+      const isNewThread = messages.length === 0
       const inputDict = {
         input: [{ role: 'user', content: prompt }],
         custom_inputs: { thread_id: currentProjectId },
+        new_thread: isNewThread,
+        // databricks_options: { return_trace: true },
+        // stream: true,
       }
       // If skills are enabled, attach the skill_name so the backend wraps the prompt
       if (skillName) {
@@ -265,6 +269,16 @@ export default function App() {
         },
         onGenie: (results) => {
           setGenieGroups(prev => [...prev, { prompt, results }])
+        },
+        onTraceId: (traceId) => {
+          setMessages(prev => {
+            const updated = [...prev]
+            const last = updated[updated.length - 1]
+            if (last?.role === 'assistant') {
+              updated[updated.length - 1] = { ...last, traceId }
+            }
+            return updated
+          })
         },
         onError: (errMsg) => {
           setMessages(prev => {

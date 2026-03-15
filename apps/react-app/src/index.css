@@ -493,7 +493,49 @@ body {
   min-width: 0;
 }
 
-.agent-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+.agent-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.agent-title { font-size: 16px; font-weight: 600; margin: 0; }
+.agent-status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.traffic-light {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.15);
+}
+.traffic-light.green { background: #22c55e; box-shadow: 0 0 6px rgba(34, 197, 94, 0.5); }
+.traffic-light.amber { background: #f59e0b; animation: pulse-amber 1.5s ease-in-out infinite; }
+.traffic-light.red   { background: #ef4444; }
+@keyframes pulse-amber {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.agent-status-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.warmup-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  transition: background 0.15s, border-color 0.15s;
+}
+.warmup-btn:hover:not(:disabled) { background: var(--highlight-bg); border-color: var(--primary-color); }
+.warmup-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .agent-divider { height: 1px; background: var(--border-color); margin: 10px 0; }
 
 .agent-activity-scroll {
@@ -527,6 +569,12 @@ body {
   background: #e3f2fd; border-radius: 6px; padding: 10px 12px;
   font-size: 13px; color: #1565c0; margin-top: 6px;
 }
+.tool-results {
+  background: #f5f5f5; border-radius: 6px; padding: 10px 12px;
+  font-size: 12px; color: var(--text-secondary); margin-top: 6px;
+  overflow-x: auto; white-space: pre-wrap; word-break: break-word;
+  max-height: 300px; overflow-y: auto;
+}
 .genie-sql {
   background: #1e1e1e; color: #d4d4d4; padding: 10px; border-radius: 6px;
   overflow-x: auto; font-size: 13px; white-space: pre-wrap; margin-top: 6px;
@@ -545,3 +593,19 @@ body {
   animation: spin 0.8s linear infinite; flex-shrink: 0;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Trace link */
+.trace-id-row {
+  margin-top: 6px;
+}
+.trace-link {
+  font-size: 0.8rem;
+  color: var(--primary-color);
+  text-decoration: none;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+.trace-link:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
