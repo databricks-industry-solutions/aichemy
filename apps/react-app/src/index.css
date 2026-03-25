@@ -80,6 +80,13 @@ body {
   width: auto;
 }
 
+.sidebar-welcome {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+  line-height: 1.4;
+}
+
 /* New Project button */
 .new-project-button {
   width: 100%;
@@ -275,15 +282,23 @@ body {
 .tool-item-name { font-weight: 500; color: var(--text-primary); }
 .tool-item-desc { font-size: 11px; color: var(--text-tertiary, #888); line-height: 1.3; }
 
-/* DB status indicator */
+/* Sidebar spacer */
 .sidebar-spacer { flex: 1; }
+
+/* Service status indicators (Agent panel) */
+.service-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+.service-status-row.agent-services {
+  margin-top: 6px;
+  margin-bottom: 4px;
+}
 .db-status-badge {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 4px 0;
-  border-top: 1px solid var(--border-color);
-  margin-top: 12px;
+  gap: 4px;
   cursor: default;
 }
 .db-dot {
@@ -294,9 +309,11 @@ body {
 }
 .db-dot.connected { background-color: #22c55e; }
 .db-dot.local { background-color: #f59e0b; }
+.db-dot.down { background-color: #ef4444; }
 .db-label {
   font-size: 11px;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
 /* ========================================================================= */

@@ -186,6 +186,27 @@ export async function fetchDbStatus() {
   return { db_backend: 'unknown', db_detail: '' }
 }
 
+/**
+ * Fetch external MCP server health status (OpenTargets, PubChem, PubMed).
+ * @returns {Promise<Object>} Map of server name -> {ok, status_code, status, detail}
+ */
+export async function fetchMcpStatus() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/health`)
+    if (response.ok) {
+      const data = await response.json()
+      const status = {}
+      for (const srv of data.mcp_servers || []) {
+        status[srv.name] = srv
+      }
+      return status
+    }
+  } catch {
+    // ignore
+  }
+  return {}
+}
+
 // ---------------------------------------------------------------------------
 // Agent status + warmup
 // ---------------------------------------------------------------------------

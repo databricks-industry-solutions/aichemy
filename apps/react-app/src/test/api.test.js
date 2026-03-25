@@ -82,7 +82,8 @@ describe('Backend Server Connectivity', () => {
       const malformedPayload = {
         // Missing required 'input' field
         custom_inputs: {
-          thread_id: 'test-malformed'
+          thread_id: 'test-malformed',
+          user_id: 'test-user-id'
         }
       }
 

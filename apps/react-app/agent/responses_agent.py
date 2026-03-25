@@ -1,13 +1,14 @@
 import asyncio
 import json
 import logging
-from uuid import uuid4
-from typing import Annotated, Any, AsyncGenerator, Generator, Optional, Sequence
+from typing import Any, AsyncGenerator, Generator, Optional
 
 from databricks.sdk import WorkspaceClient
-from databricks_langchain import AsyncCheckpointSaver
-from langchain_core.messages import AIMessage, AnyMessage
+from databricks_langchain import AsyncCheckpointSaver, AsyncDatabricksStore
+from langchain_core.messages import AIMessage
 from langchain_core.messages.tool import ToolMessage
+from langgraph.graph.state import StateGraph
+from langgraph.store.base import BaseStore
 from mlflow.pyfunc import ResponsesAgent
 from mlflow.types.responses import (
     ResponsesAgentRequest,
@@ -16,46 +17,47 @@ from mlflow.types.responses import (
     output_to_responses_items_stream,
     to_chat_completions_input,
 )
-from langgraph.graph.state import StateGraph
+
+from agent.utils_memory import get_user_id, fetch_user_memories
 
 logger = logging.getLogger(__name__)
 
 
 class WrappedAgent(ResponsesAgent):
-    """ResponsesAgent wrapper with optional Lakebase memory via AsyncCheckpointSaver."""
+    """ResponsesAgent wrapper with Lakebase-backed store + checkpointer.
+
+    - **Store** (``AsyncDatabricksStore``): per-user long-term memory (preferences, notes).
+    - **Checkpointer** (``AsyncCheckpointSaver``): full conversation state per thread,
+      enabling multi-turn continuity without resending the entire history.
+    Both share the same Lakebase Autoscale project/branch.
+    """
 
     def __init__(
         self,
         workflow: StateGraph,
         workspace_client: Optional[WorkspaceClient] = None,
-        lakebase_instance: Optional[str] = None,
+        cfg: dict[str, Any] = None,
     ):
         self.workflow = workflow
         self.workspace_client = workspace_client or WorkspaceClient()
-        self.lakebase_instance = lakebase_instance
+        self.config = cfg
 
-    def _add_memory(self, checkpointer: AsyncCheckpointSaver):
-        if self.workflow is not None and checkpointer is not None:
-            return self.workflow.compile(checkpointer=checkpointer)
-        elif self.workflow is not None and checkpointer is None:
-            # No memory
-            print("No checkpointer found so compiling workflow without memory")
-            return self.workflow.compile()
+        self.lakebase_autoscaling_project = cfg["lakebase"]["project_id"]
+        self.lakebase_autoscaling_branch = cfg["lakebase"]["branch_id"]
+        self.embedding_endpoint = cfg["lakebase"]["embedding"]
+        self.embedding_dim = cfg["lakebase"]["embedding_dim"]
 
-    def _get_or_create_thread_id(self, request: ResponsesAgentRequest) -> str:
-        """Get thread_id from request or create a new one.
-
-        Priority:
-        1. thread_id from custom_inputs
-        2. conversation_id from chat context
-        3. New UUID
-        """
-        ci = dict(request.custom_inputs or {})
-        if "thread_id" in ci:
-            return ci["thread_id"]
-        if request.context and getattr(request.context, "conversation_id", None):
-            return request.context.conversation_id
-        return str(uuid4())
+    def _compile(self, store: Optional[BaseStore] = None, checkpointer=None):
+        if self.workflow is None:
+            raise RuntimeError("Workflow not set")
+        kwargs: dict[str, Any] = {}
+        if store is not None:
+            kwargs["store"] = store
+        if checkpointer is not None:
+            kwargs["checkpointer"] = checkpointer
+        if not kwargs:
+            logger.warning("Compiling workflow without store or checkpointer")
+        return self.workflow.compile(**kwargs)
 
     # Make a prediction (single-step) for the agent
     def predict(self, request: ResponsesAgentRequest) -> ResponsesAgentResponse:
@@ -76,19 +78,54 @@ class WrappedAgent(ResponsesAgent):
         self,
         request: ResponsesAgentRequest,
     ) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
-        async with AsyncCheckpointSaver(
-            instance_name=self.lakebase_instance,
+        from uuid import uuid4
+
+        lakebase_kwargs = dict(
+            project=self.lakebase_autoscaling_project,
+            branch=self.lakebase_autoscaling_branch,
             workspace_client=self.workspace_client,
-        ) as checkpointer:
-            self.agent = self._add_memory(checkpointer)
+        )
+        async with (
+            AsyncDatabricksStore(
+                **lakebase_kwargs,
+                embedding_endpoint=self.embedding_endpoint,
+                embedding_dims=self.embedding_dim,
+            ) as store,
+            AsyncCheckpointSaver(**lakebase_kwargs) as checkpointer,
+        ):
+            await store.setup()
+            await checkpointer.setup()
+            self.agent = self._compile(store=store, checkpointer=checkpointer)
+
             cc_msgs = to_chat_completions_input([i.model_dump() for i in request.input])
-            recursion_limit = (request.custom_inputs or {}).get("recursion_limit", 25)
+            ci = dict(request.custom_inputs or {})
+            recursion_limit = ci.get("recursion_limit", 25)
+            thread_id = ci.get("thread_id", str(uuid4()))
+            user_id = get_user_id(request)
+
+            # Auto-inject relevant user memories as context so the
+            # supervisor never needs to route to a memory agent for retrieval.
+            if user_id:
+                last_user_msg = ""
+                for m in reversed(cc_msgs):
+                    if getattr(m, "type", None) == "human" or (isinstance(m, dict) and m.get("role") == "user"):
+                        last_user_msg = m.content if hasattr(m, "content") else m.get("content", "")
+                        break
+                memory_ctx = await fetch_user_memories(store, user_id, query=last_user_msg)
+                if memory_ctx:
+                    from langchain_core.messages import SystemMessage
+                    cc_msgs = [SystemMessage(content=memory_ctx)] + list(cc_msgs)
+
             inputs = {"messages": cc_msgs}
-            thread_id = self._get_or_create_thread_id(request)
-            config = {
-                "configurable": {"thread_id": thread_id},
+            config: dict[str, Any] = {
+                "configurable": {
+                    "thread_id": thread_id,
+                    "store": store,
+                },
                 "recursion_limit": recursion_limit,
             }
+            if user_id:
+                config["configurable"]["user_id"] = user_id
 
             # Stream node-level updates only (not individual LLM tokens via "messages"
             # mode, which would leak the supervisor's intermediate reasoning/hallucinations).

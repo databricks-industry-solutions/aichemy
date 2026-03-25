@@ -39,6 +39,7 @@ from agent.utils import (
     get_secret,
     init_workspace_client,
     build_mcp_list,
+    _collect_tool_metadata,
     _load_mcp_tools_individually,
     _keepalive_loop,
     _touch_activity,
@@ -46,7 +47,9 @@ from agent.utils import (
     _log_exception_group,
     _run_mcp_loop,
     _mcp_run,
+    wrap_mcp_tools_with_resilience,
 )
+from agent.utils_memory import memory_write_tools
 
 # ---------------------------------------------------------------------------
 # Config
@@ -54,6 +57,7 @@ from agent.utils import (
 with open(_app_root / "config.yml") as _f:
     _cfg = yaml.safe_load(_f)
 
+# Based on SP
 ws_client = init_workspace_client(_cfg)
 
 _KEEPALIVE_IDLE_SECS = int(os.environ.get("AGENT_KEEPALIVE_SECS", 600))
@@ -64,6 +68,7 @@ _KEEPALIVE_IDLE_SECS = int(os.environ.get("AGENT_KEEPALIVE_SECS", 600))
 
 _workflow: Optional[StateGraph] = None
 _agent = None
+_agent_tools: dict[str, list[dict]] = {}
 mcp_client = None
 _agent_ready = threading.Event()
 _agent_build_error: Optional[str] = None
@@ -167,16 +172,29 @@ def _build_agent() -> StateGraph:
         mcp_tools = _mcp_run(mcp_client.get_tools())
         logger.info("MCP tools loaded: %d tools", len(mcp_tools))
     except BaseException as exc:
-        _log_exception_group(exc)
-        logger.warning("Batch MCP loading failed — trying servers individually…")
+        server_names = ", ".join(s.name for s in servers)
+        _log_exception_group(exc, server_names=server_names)
+        logger.warning("Batch MCP loading failed for [%s] — trying servers individually…", server_names)
         mcp_tools = _load_mcp_tools_individually(servers)
+    mcp_tools = wrap_mcp_tools_with_resilience(mcp_tools)
     mcp_agent = create_agent(
         llm, tools=mcp_tools, system_prompt=_cfg["prompts"]["mcp"], name="mcp"
     )
 
+    # --- Memory agent (save/delete only — retrieval is auto-injected) ---
+    mem_agent = create_agent(
+        llm,
+        tools=memory_write_tools(),
+        system_prompt=_cfg["prompts"]["memory"],
+        name="memory",
+    )
+
+    global _agent_tools
+    _agent_tools = _collect_tool_metadata(mcp_tools, _cfg)
+
     # --- Supervisor ---
     workflow = create_supervisor(
-        [mcp_agent] + function_agents + genie_agents + retriever_agents,
+        [mcp_agent, mem_agent] + function_agents + genie_agents + retriever_agents,
         model=llm,
         prompt=_cfg["prompts"]["supervisor"],
         output_mode="last_message",
@@ -195,8 +213,8 @@ def build_responses_agent(workflow: Optional[StateGraph] = None) -> WrappedAgent
         workflow = _build_agent()
     return WrappedAgent(
         workflow=workflow,
-        workspace_client=ws_client,
-        lakebase_instance=_cfg["lakebase_agent"]["instance_name"],
+        workspace_client=ws_client,  #use SP-based ws_client for Lakebase writes
+        cfg=_cfg
     )
 
 
@@ -288,8 +306,12 @@ async def predict_stream_raw(
     cc_msgs = to_chat_completions_input([i.model_dump() for i in request.input])
     ci = dict(request.custom_inputs or {})
     thread_id = ci.get("thread_id", str(uuid4()))
+    user_id = ci.get("user_id")
     inputs = {"messages": cc_msgs}
     config = {"configurable": {"thread_id": thread_id}}
+    if user_id:
+        config = {"configurable": {"thread_id": thread_id, "user_id": user_id}}
+        
 
     async for chunk in _workflow.compile().astream(inputs, config=config):
         print(chunk, flush=True)

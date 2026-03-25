@@ -1,10 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { fetchAgentStatus, warmupAgent } from '../api/agentAPI'
 
+const MCP_INDICATORS = [
+  { key: 'opentargets', label: 'OpenTargets' },
+  { key: 'pubchem', label: 'PubChem' },
+  { key: 'pubmed', label: 'PubMed' },
+]
+
 export default function AgentPanel({
   toolCallGroups,  // [{prompt, toolCalls: [{function_name, parameters, thinking}]}]
   genieGroups,     // [{prompt, results: [{description, query, result}]}]
   isLoading,
+  dbStatus,
+  mcpStatus = {},
 }) {
   const [agentStatus, setAgentStatus] = useState({ ready: false, building: true, error: null })
   const [warmingUp, setWarmingUp] = useState(false)
@@ -63,6 +71,35 @@ export default function AgentPanel({
             </button>
           )}
         </div>
+      </div>
+      <div className="service-status-row agent-services">
+        <div className="db-status-badge" title={dbStatus?.db_detail || ''}>
+          <span className={`db-dot ${dbStatus ? 'connected' : 'local'}`} />
+          <span className="db-label">{dbStatus ? 'Lakebase' : '…'}</span>
+        </div>
+        {MCP_INDICATORS.map(({ key, label }) => {
+          const srv = mcpStatus[key]
+          let dotClass = 'local'
+          let tooltip = `${label}: checking…`
+          if (srv) {
+            if (!srv.ok) {
+              dotClass = 'down'
+              tooltip = `${label}: ${srv.error || 'unreachable'}`
+            } else if (srv.status === 'reachable') {
+              dotClass = 'local'
+              tooltip = `${label}: reachable (${srv.status_code} ${srv.detail || ''})`
+            } else {
+              dotClass = 'connected'
+              tooltip = `${label}: connected (${srv.status_code})`
+            }
+          }
+          return (
+            <div key={key} className="db-status-badge" title={tooltip}>
+              <span className={`db-dot ${dotClass}`} />
+              <span className="db-label">{label}</span>
+            </div>
+          )
+        })}
       </div>
       <div className="agent-divider" />
 

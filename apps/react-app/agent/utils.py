@@ -67,6 +67,7 @@ def get_secret(scope: str, key: str) -> str:
 
 
 def init_workspace_client(cfg):
+    # SP login takes precedence over PAT/profile login (for Lakebase writes)
     client_id = get_secret(scope='aichemy', key='client_id')
     client_secret = get_secret(scope='aichemy', key='client_secret')
     try:
@@ -83,18 +84,33 @@ def init_workspace_client(cfg):
 
 def get_trace(trace_id: str, retries: int = 5, delay: float = 2.0):
     """Get a trace by its ID with retries (agent writes are async).
-    Returns the Trace object or None after all retries fail."""
+
+    Waits until the trace exists AND is complete (all spans flushed).
+    A trace is considered complete when its state is a terminal value
+    (OK / ERROR) and it contains at least one span.
+    Returns the Trace object or None after all retries fail.
+    """
     import time
+
+    _TERMINAL = {"OK", "ERROR", "TraceStatus.OK", "TraceStatus.ERROR"}
+
     for attempt in range(retries):
         try:
             trace = mlflow.get_trace(trace_id=trace_id)
             if trace is not None:
-                return trace
+                state = str(getattr(trace.info, "state", ""))
+                spans = trace.data.spans if trace.data else []
+                if state in _TERMINAL and len(spans) > 0:
+                    return trace
         except Exception:
             pass
         if attempt < retries - 1:
             time.sleep(delay)
-    return None
+    # Last-ditch: return whatever we have (may be incomplete)
+    try:
+        return mlflow.get_trace(trace_id=trace_id)
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -113,15 +129,16 @@ def _mcp_run(coro, timeout=300):
     return asyncio.run_coroutine_threadsafe(coro, _mcp_loop).result(timeout=timeout)
 
 
-def _log_exception_group(exc: BaseException) -> None:
+def _log_exception_group(exc: BaseException, server_names: str = "") -> None:
     """Recursively log all sub-exceptions from an ExceptionGroup."""
+    prefix = f"[{server_names}] " if server_names else ""
     if isinstance(exc, BaseExceptionGroup):
         for i, sub in enumerate(exc.exceptions, 1):
-            logger.error("  MCP sub-exception %d/%d: %s: %s", i, len(exc.exceptions),
+            logger.error("  %sMCP sub-exception %d/%d: %s: %s", prefix, i, len(exc.exceptions),
                          type(sub).__name__, sub)
-            _log_exception_group(sub)
+            _log_exception_group(sub, server_names=server_names)
     else:
-        logger.error("  MCP root cause: %s: %s", type(exc).__name__, exc)
+        logger.error("  %sMCP root cause: %s: %s", prefix, type(exc).__name__, exc)
 
 
 def build_mcp_list(cfg, ws_client=None):
@@ -177,7 +194,7 @@ def _load_mcp_tools_individually(servers, max_retries: int = 3) -> list:
                 loaded = True
                 break
             except BaseException as e:
-                _log_exception_group(e)
+                _log_exception_group(e, server_names=srv.name)
                 if attempt < max_retries:
                     wait = 2 ** attempt
                     logger.info("  ⟳ %s: retry %d/%d in %ds…", srv.name, attempt, max_retries, wait)
@@ -248,3 +265,58 @@ def _keepalive_loop(get_state, keepalive_secs=600) -> None:
                 _ping_mcp(mcp)
                 #_warmup(agent)
                 _touch_activity()
+
+
+def _collect_tool_metadata(mcp_tools: list, cfg: dict) -> dict[str, list[dict]]:
+    """Build a {agent_name: [{name, description}, ...]} dict from live tools and config."""
+    from databricks_langchain.uc_ai import UCFunctionToolkit
+    from agent.utils_memory import memory_write_tools
+
+    def _meta(t):
+        return {"name": getattr(t, "name", str(t)), "description": getattr(t, "description", "") or ""}
+
+    result: dict[str, list[dict]] = {}
+    result["mcp"] = [_meta(t) for t in mcp_tools]
+    result["memory"] = [_meta(t) for t in memory_write_tools()]
+    for agent_name, functions in cfg.get("uc_functions", {}).items():
+        result[agent_name] = [_meta(t) for t in UCFunctionToolkit(function_names=functions).tools]
+    for agent_name in cfg.get("genie", {}):
+        result[agent_name] = [{"name": "genie_query", "description": "Text-to-SQL via Genie Space"}]
+    for agent_name, rc in cfg.get("retriever", {}).items():
+        result[agent_name] = [{"name": agent_name, "description": rc.get("tool_description", "")}]
+    return result
+
+
+def wrap_mcp_tools_with_resilience(tools, max_concurrent=2, call_delay=1.0):
+    """Wrap MCP tools with concurrency limiting and graceful error handling.
+
+    Prevents 429 rate-limit errors from external MCP servers by throttling
+    concurrent calls via a semaphore and inserting a delay after each call.
+    Errors are returned as strings so the LLM can adapt rather than crashing
+    the entire agent stream.
+    """
+    sem = asyncio.Semaphore(max_concurrent)
+
+    for tool in tools:
+        orig = tool.coroutine
+        name = tool.name
+        expects_tuple = getattr(tool, "response_format", None) == "content_and_artifact"
+
+        async def _wrapped(*args, _orig=orig, _name=name, _tuple=expects_tuple, **kwargs):
+            async with sem:
+                try:
+                    result = await _orig(*args, **kwargs)
+                    await asyncio.sleep(call_delay)
+                    return result
+                except Exception as e:
+                    logger.error("MCP tool '%s' error: %s: %s", _name, type(e).__name__, e)
+                    err_msg = (
+                        f"Error calling tool '{_name}': {type(e).__name__}: {e}. "
+                        f"The external service may be temporarily unavailable or "
+                        f"rate-limiting. Try a different approach or tool."
+                    )
+                    return (err_msg, None) if _tuple else err_msg
+
+        tool.coroutine = _wrapped
+    return tools
+

@@ -24,7 +24,7 @@ export default function Sidebar({
   onSelectWorkflow,
   skillsEnabled,
   onToggleSkills,
-  dbStatus,
+  userInfo,
 }) {
   const [renamingId, setRenamingId] = useState(null)
   const [renameValue, setRenameValue] = useState('')
@@ -74,6 +74,11 @@ export default function Sidebar({
       <div className="sidebar-logo">
         <img src="/logo.svg" alt="AiChemy" className="logo-svg" />
       </div>
+
+      {/* Welcome banner */}
+      {userInfo?.user_name && (
+        <div className="sidebar-welcome">Welcome, {userInfo.user_name}</div>
+      )}
 
       {/* New Project button */}
       <button className="new-project-button" onClick={() => onNewProject()}>
@@ -180,14 +185,7 @@ export default function Sidebar({
         ))}
       </div>
 
-      {/* DB status indicator */}
       <div className="sidebar-spacer" />
-      <div className="db-status-badge" title={dbStatus?.db_detail || ''}>
-        <span className={`db-dot ${dbStatus?.db_backend === 'lakebase' ? 'connected' : 'local'}`} />
-        <span className="db-label">
-          {dbStatus?.db_backend === 'lakebase' ? 'Lakebase' : dbStatus?.db_backend === 'sqlite' ? 'SQLite (local)' : '…'}
-        </span>
-      </div>
     </aside>
   )
 }
