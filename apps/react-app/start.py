@@ -16,6 +16,11 @@ import time
 from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(APP_ROOT))
+
+from agent.utils import load_env_from_app_yaml
+
+load_env_from_app_yaml()
 
 
 def _tee_stderr(pipe, prefix: str):
@@ -29,8 +34,6 @@ def _tee_stderr(pipe, prefix: str):
 
 
 def main():
-    os.chdir(APP_ROOT)
-
     agent_proc = None
 
     def cleanup():

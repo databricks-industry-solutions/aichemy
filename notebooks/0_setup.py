@@ -26,7 +26,7 @@ client_secret = dbutils.widgets.get("client_secret")
 
 from mlflow.models import ModelConfig
 
-cfg = ModelConfig(development_config="config.yml")
+cfg = ModelConfig(development_config="../apps/react-app/config.yml")
 cfg.to_dict()
 
 # COMMAND ----------
@@ -67,7 +67,7 @@ else:  # database instance does not exist
 
 # COMMAND ----------
 
-from src.lakebase import LakebaseConnect
+from lakebase import LakebaseConnect
 from databricks.sdk import WorkspaceClient
 
 # Test connection to Provisioned Lakebase

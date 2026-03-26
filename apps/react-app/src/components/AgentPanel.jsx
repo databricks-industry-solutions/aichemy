@@ -1,10 +1,18 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { fetchAgentStatus, warmupAgent } from '../api/agentAPI'
 
+const MCP_INDICATORS = [
+  { key: 'opentargets', label: 'OpenTargets' },
+  { key: 'pubchem', label: 'PubChem' },
+  { key: 'pubmed', label: 'PubMed' },
+]
+
 export default function AgentPanel({
   toolCallGroups,  // [{prompt, toolCalls: [{function_name, parameters, thinking}]}]
   genieGroups,     // [{prompt, results: [{description, query, result}]}]
   isLoading,
+  dbStatus,
+  mcpStatus = {},
 }) {
   const [agentStatus, setAgentStatus] = useState({ ready: false, building: true, error: null })
   const [warmingUp, setWarmingUp] = useState(false)
@@ -64,6 +72,35 @@ export default function AgentPanel({
           )}
         </div>
       </div>
+      <div className="service-status-row agent-services">
+        <div className="db-status-badge" title={dbStatus?.db_detail || ''}>
+          <span className={`db-dot ${dbStatus ? 'connected' : 'local'}`} />
+          <span className="db-label">{dbStatus ? 'Lakebase' : '…'}</span>
+        </div>
+        {MCP_INDICATORS.map(({ key, label }) => {
+          const srv = mcpStatus[key]
+          let dotClass = 'local'
+          let tooltip = `${label}: checking…`
+          if (srv) {
+            if (!srv.ok) {
+              dotClass = 'down'
+              tooltip = `${label}: ${srv.error || 'unreachable'}`
+            } else if (srv.status === 'reachable') {
+              dotClass = 'local'
+              tooltip = `${label}: reachable (${srv.status_code} ${srv.detail || ''})`
+            } else {
+              dotClass = 'connected'
+              tooltip = `${label}: connected (${srv.status_code})`
+            }
+          }
+          return (
+            <div key={key} className="db-status-badge" title={tooltip}>
+              <span className={`db-dot ${dotClass}`} />
+              <span className="db-label">{label}</span>
+            </div>
+          )
+        })}
+      </div>
       <div className="agent-divider" />
 
       <div className="agent-activity-scroll">
@@ -122,12 +159,13 @@ function ToolCallExpander({ index, toolCall }) {
         <div className="expander-body">
           {toolCall.parameters && Object.entries(toolCall.parameters).map(([k, v]) => (
             <div key={k} className="tool-param">
-              <strong>{k}:</strong> {v}
+              <strong>{k}:</strong> {typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v ?? '')}
             </div>
           ))}
-          {toolCall.results && (
-            <pre className="tool-results">{toolCall.results.length > 1060 ? toolCall.results.slice(0, 1060) + '...' : toolCall.results}</pre>
-          )}
+          {toolCall.results != null && (() => {
+            const text = typeof toolCall.results === 'string' ? toolCall.results : JSON.stringify(toolCall.results, null, 2)
+            return <pre className="tool-results">{text.length > 1060 ? text.slice(0, 1060) + '...' : text}</pre>
+          })()}
         </div>
       )}
     </div>

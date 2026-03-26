@@ -117,7 +117,7 @@ export default function ChatPanel({
     <section className="chat-column">
       {/* Header */}
       <div className="chat-header">
-        <h2>{projectName || 'Untitled Project'}</h2>
+        <h2>{projectName || 'Chat'}</h2>
       </div>
 
       {/* Chat History */}

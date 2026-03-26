@@ -18,7 +18,7 @@ from databricks.sdk import WorkspaceClient
 import mlflow
 from mlflow.models import ModelConfig
 
-cfg = ModelConfig(development_config="config.yml")
+cfg = ModelConfig(development_config="../apps/react-app/config.yml")
 
 mlflow.langchain.autolog()
 
@@ -188,7 +188,6 @@ tools_list
 
 # Use the patched DatabricksMCPClient to disable zstd decoding
 from databricks_mcp import DatabricksMCPClient
-# from src.databricks_mcp_client import DatabricksMCPClient
 import nest_asyncio
 
 nest_asyncio.apply()

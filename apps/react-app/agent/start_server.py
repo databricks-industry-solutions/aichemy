@@ -4,37 +4,35 @@ Serves the agent at POST /invocations, GET /health; proxies UI to Streamlit.
 """
 from pathlib import Path
 import sys
-from mlflow.genai.agent_server import AgentServer, setup_mlflow_git_based_version_tracking
+from mlflow.genai.agent_server import AgentServer
 import mlflow
 import os
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+
 
 _app_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_app_root))
 
-from agent.utils import init_mlflow
+from agent.utils import init_mlflow, load_env_from_app_yaml
 
+load_env_from_app_yaml()
 init_mlflow()
 mlflow.langchain.autolog()
 
 # Import agent to register @invoke / @stream with the server
 try:
-    import agent.agent  # noqa: F401
-except ImportError:
-    import agent as _agent_pkg  # noqa: F401
+    import agent.agent as _agent_mod
+except Exception as _import_err:
+    import logging as _logging
+    _logging.getLogger(__name__).error("Failed to import agent.agent: %s", _import_err, exc_info=True)
 
 agent_server = AgentServer("ResponsesAgent", enable_chat_proxy=True)
 app = agent_server.app
 
-setup_mlflow_git_based_version_tracking()
-
 # ---------------------------------------------------------------------------
 # Custom endpoints: agent readiness + warmup
 # ---------------------------------------------------------------------------
-from starlette.responses import JSONResponse
-from starlette.routing import Route
-import agent.agent as _agent_mod
-
-
 async def agent_status_endpoint(request):
     ready = _agent_mod._agent_ready.is_set()
     has_agent = _agent_mod._agent is not None
@@ -56,8 +54,16 @@ async def agent_warmup_endpoint(request):
     return JSONResponse({"ok": True, "detail": "Warmup started"})
 
 
+async def agent_tools_endpoint(request):
+    """Return tool metadata grouped by sub-agent, collected during agent build."""
+    if not _agent_mod._agent_ready.is_set():
+        return JSONResponse({"error": "Agent not ready"}, status_code=503)
+    return JSONResponse(_agent_mod._agent_tools)
+
+
 app.routes.insert(0, Route("/agent-status", agent_status_endpoint, methods=["GET"]))
 app.routes.insert(0, Route("/agent-warmup", agent_warmup_endpoint, methods=["POST"]))
+app.routes.insert(0, Route("/agent-tools", agent_tools_endpoint, methods=["GET"]))
 
 def main():
     # Required when run on Databricks Apps (or as subprocess): nest_asyncio + uvloop

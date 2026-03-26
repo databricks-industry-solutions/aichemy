@@ -1,7 +1,10 @@
 """
 Backend proxy server for AiChemy React app.
 Handles Databricks authentication, proxies requests to the agent endpoint,
-and provides project persistence via SQLite (local dev) or Lakebase Postgres (production).
+and persists project metadata to Lakebase Autoscaling Postgres.
+
+Long-term user memory (facts, preferences) is handled separately by the agent
+backend via AsyncDatabricksStore (LangGraph postgres store).
 
 The agent endpoint (POST /invocations) is served by agent/start_server.py (MLflow AgentServer).
 Port is set via AGENT_PORT (default 8080). Run separately: python agent/start_server.py --port <AGENT_PORT>
@@ -10,7 +13,6 @@ import os
 import re
 import json
 import yaml
-import sqlite3
 import requests
 from uuid import uuid4
 from datetime import datetime, timezone
@@ -30,173 +32,95 @@ _app_root = Path(__file__).resolve().parent.parent
 _project_root = _app_root.parent.parent
 sys.path.insert(0, str(_app_root))
 
-from agent.utils import get_secret, init_mlflow
+from agent.utils import *
 
+load_env_from_app_yaml()
 init_mlflow()
 
 
-def get_trace(trace_id: str, retries: int = 5, delay: float = 2.0):
-    """Get a trace by its ID with retries (agent writes are async).
-    Returns the Trace object or None after all retries fail."""
-    import time
-    for attempt in range(retries):
-        try:
-            trace = mlflow.get_trace(trace_id=trace_id)
-            if trace is not None:
-                return trace
-        except Exception:
-            pass
-        if attempt < retries - 1:
-            time.sleep(delay)
-    return None
-
 # ---------------------------------------------------------------------------
-# Database layer – auto-connects to Lakebase if Databricks auth is available,
-# otherwise falls back to local SQLite. No manual config needed.
+# Database layer — persists project metadata to Lakebase Autoscaling Postgres.
 # ---------------------------------------------------------------------------
 
 class ProjectDB:
-    """Project storage with automatic Lakebase Autoscaling connection.
+    """Project metadata persisted to Lakebase Autoscaling Postgres.
 
-    On startup, tries to connect to Lakebase Autoscaling using Databricks SDK auth.
-    If that fails for any reason, silently falls back to local SQLite.
+    Stores project metadata (name, timestamps, user), chat messages,
+    and parsed agent steps (tool calls, genie results).
 
     Lakebase Autoscaling uses the w.postgres API with hierarchical resource names:
       projects/{project_id}/branches/{branch_id}/endpoints/{endpoint_id}
     """
 
-    def __init__(self, sqlite_path: str = "projects.db"):
-        self._sqlite_path = sqlite_path
-        self._use_pg = False
-        self._last_lakebase_error: Optional[str] = None
-        self._lakebase_project_id: Optional[str] = None
-        self._lakebase_branch_id: Optional[str] = None
-        self._lakebase_endpoint_id: Optional[str] = None
-        self._lakebase_endpoint_name: Optional[str] = None  # full resource path
-        self._lakebase_database: Optional[str] = None
-        self._lakebase_host: Optional[str] = None
-        self._lakebase_token: Optional[str] = None
-        self._lakebase_user: Optional[str] = None
-        self._sp_client: Optional[WorkspaceClient] = None
-        self._host: Optional[str] = None
-
-    def init(self):
-        """Initialize DB — call after WorkspaceClient is available."""
-        if self._try_lakebase():
-            print("[ProjectDB] Using Lakebase Autoscaling Postgres")
-        else:
-            print("[ProjectDB] Using local SQLite")
-            self._init_sqlite()
-
-    # -- Lakebase Autoscaling auto-detection --------------------------------
-
-    def _try_lakebase(self) -> bool:
-        """Try to auto-connect to Lakebase Autoscaling using service principal credentials.
+    def __init__(self):
+        """Connect to Lakebase Autoscaling Postgres.
 
         Flow:
           1. Read config.yml for lakebase project_id / branch_id / endpoint_id / database
-          2. Get SP credentials: env vars (Databricks Apps) > secrets API (local dev)
-          3. Create an SP-authenticated WorkspaceClient
+          2. Get SP credentials via secrets API
+          3. Create SP-authenticated WorkspaceClient
           4. Resolve endpoint host via w.postgres.get_endpoint()
-          5. Generate an ephemeral OAuth token via w.postgres.generate_database_credential()
+          5. Generate ephemeral OAuth token via w.postgres.generate_database_credential()
           6. Test the connection (with retry for scale-to-zero wake-up)
-
-        Falls back to SQLite if any step fails.
         """
+        self._last_lakebase_error: Optional[str] = None
+        self._sp_client: Optional[WorkspaceClient] = None
+        self._lakebase_project_id: Optional[str] = None
+        self._lakebase_branch_id: Optional[str] = None
+        self._lakebase_endpoint_id: Optional[str] = None
+        self._lakebase_database: Optional[str] = None
+        self._lakebase_endpoint_name: Optional[str] = None
+        self._lakebase_host: Optional[str] = None
+        self._lakebase_token: Optional[str] = None
+        self._lakebase_user: Optional[str] = None
+        self._token_issued_at: float = 0.0
+
         try:
-            # 1. Read config.yml
             cfg = _load_config()
             if not cfg:
-                print("[ProjectDB] config.yml not found, skipping Lakebase")
-                return False
+                raise RuntimeError("config.yml not found")
 
             lakebase_cfg = cfg.get("lakebase")
             if not lakebase_cfg or not lakebase_cfg.get("project_id"):
-                return False
+                raise RuntimeError("lakebase config missing project_id")
 
             self._lakebase_project_id = lakebase_cfg["project_id"]
             self._lakebase_branch_id = lakebase_cfg.get("branch_id", "main")
             self._lakebase_endpoint_id = lakebase_cfg.get("endpoint_id", "primary")
             self._lakebase_database = lakebase_cfg.get("database", "databricks_postgres")
             self._lakebase_endpoint_name = (
-                f"projects/{self._lakebase_project_id}"
-                f"/branches/{self._lakebase_branch_id}"
-                f"/endpoints/{self._lakebase_endpoint_id}"
+                f"projects/{self._lakebase_project_id}/branches/{self._lakebase_branch_id}/endpoints/{self._lakebase_endpoint_id}"
             )
             self._host = cfg.get("host")
 
-            # 2. Get SP credentials: env vars (Databricks Apps) > secrets API (local dev)
             sp_client_id = get_secret(scope='aichemy', key='client_id')
             sp_client_secret = get_secret(scope='aichemy', key='client_secret')
-
             if not (sp_client_id and sp_client_secret):
-                print("[ProjectDB] SP credentials missing from Databricks secrets. Skipping Lakebase.")
-                return False
+                raise RuntimeError("SP credentials not found in secrets")
 
-            # 3. Create SP-authenticated client
-            sp_client = WorkspaceClient(
+            self._sp_client = WorkspaceClient(
                 host=self._host,
                 client_id=sp_client_id,
                 client_secret=sp_client_secret,
             )
-            print(f"[ProjectDB] SP client: {sp_client}")
 
-            # Cache the SP client for token refresh
-            self._sp_client = sp_client
-
-            # 4. Resolve endpoint host via Lakebase Autoscaling API
-            endpoint = sp_client.postgres.get_endpoint(name=self._lakebase_endpoint_name)
+            endpoint = self._sp_client.postgres.get_endpoint(name=self._lakebase_endpoint_name)
             self._lakebase_host = endpoint.status.hosts.host
-            self._lakebase_user = sp_client_id  # SP client_id IS the Postgres role
+            self._lakebase_user = sp_client_id
 
-            # 5. Generate ephemeral OAuth token (1h expiry)
-            cred = sp_client.postgres.generate_database_credential(
-                endpoint=self._lakebase_endpoint_name,
-            )
-            # self._lakebase_token = cred.token
-            self._lakebase_token = get_secret(scope='aichemy', key='lakebase_as')
+            self._refresh_token()
 
-            # 6. Test the connection (retry for scale-to-zero wake-up)
-            import psycopg
-            conninfo = self._build_conninfo()
-            self._connect_with_retry(conninfo)
+            self._connect_with_retry(self._build_conninfo())
+            self._ensure_schema()
+            print(f"[ProjectDB] Connected: {self._lakebase_host} / {self._lakebase_database}")
 
-            print(f"[ProjectDB] Lakebase Autoscaling connected: {self._lakebase_host} / {self._lakebase_database}")
-            self._use_pg = True
-            self._create_pg_tables()
-            return True
-
-        except Exception as e:
+        except Exception:
             import traceback
-            tb = traceback.format_exc()
-            self._last_lakebase_error = tb
-            print(f"[ProjectDB] Lakebase auto-connect failed:\n{tb}")
-            self._use_pg = False
-            return False
+            self._last_lakebase_error = traceback.format_exc()
+            print(f"[ProjectDB] Lakebase connection failed:\n{self._last_lakebase_error}")
+            raise
 
-    def _connect_with_retry(self, conninfo: str, max_retries: int = 5, base_delay: float = 1.0):
-        """Connect with retry logic for Lakebase Autoscaling scale-to-zero wake-up.
-
-        When compute is scaled to zero, the first connection attempt may fail while
-        the compute wakes up (typically a few hundred milliseconds). We retry with
-        exponential backoff to handle this gracefully.
-        """
-        import psycopg
-        import time
-
-        last_error = None
-        for attempt in range(max_retries):
-            try:
-                with psycopg.connect(conninfo, connect_timeout=10) as conn:
-                    conn.execute("SELECT 1")
-                return  # success
-            except Exception as e:
-                last_error = e
-                if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)  # 1s, 2s, 4s, 8s, 16s
-                    print(f"[ProjectDB] Connection attempt {attempt + 1} failed, retrying in {delay}s... ({e})")
-                    time.sleep(delay)
-        raise last_error
+    # -- Connection helpers -------------------------------------------------
 
     def _build_conninfo(self) -> str:
         return (
@@ -207,46 +131,38 @@ class ProjectDB:
             f"sslmode=require"
         )
 
+    def _connect_with_retry(self, conninfo: str, max_retries: int = 5, base_delay: float = 1.0):
+        """Retry connection for Lakebase scale-to-zero wake-up."""
+        import psycopg
+        import time
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                with psycopg.connect(conninfo, connect_timeout=10) as conn:
+                    conn.execute("SELECT 1")
+                return
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    print(f"[ProjectDB] Attempt {attempt + 1} failed, retrying in {delay}s... ({e})")
+                    time.sleep(delay)
+        raise last_error
+
     def _refresh_token(self):
         """Refresh the Lakebase OAuth token using the cached SP client."""
-        try:
-            cred = self._sp_client.postgres.generate_database_credential(
-                endpoint=self._lakebase_endpoint_name,
-            )
-            self._lakebase_token = cred.token
-            print("[ProjectDB] Token refreshed successfully")
-        except Exception as e:
-            print(f"[ProjectDB] Token refresh failed: {e}")
+        import time
+        cred = self._sp_client.postgres.generate_database_credential(
+            endpoint=self._lakebase_endpoint_name,
+        )
+        self._lakebase_token = cred.token
+        self._token_issued_at = time.monotonic()
+        print("[ProjectDB] Token refreshed")
 
-    # -- Initialization -----------------------------------------------------
-
-    def _init_sqlite(self):
-        with self._conn() as conn:
-            cur = self._cursor(conn)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS projects (
-                    id TEXT PRIMARY KEY,
-                    user_id TEXT NOT NULL,
-                    name TEXT NOT NULL,
-                    messages TEXT NOT NULL DEFAULT '[]',
-                    agent_steps TEXT DEFAULT '[]',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
-            """)
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id)")
-            conn.commit()
-
-    def _create_pg_tables(self):
-        """Create the projects table in Lakebase if it doesn't exist.
-
-        Uses a plain psycopg connection (not the _conn context manager) because
-        this runs during init before _use_pg is set. Skips CREATE TABLE if the
-        table already exists to avoid ownership conflicts.
-        """
+    def _ensure_schema(self):
+        """Create the projects table if it doesn't exist; migrate if needed."""
         import psycopg
-        conninfo = self._build_conninfo()
-        with psycopg.connect(conninfo, connect_timeout=10) as conn:
+        with psycopg.connect(self._build_conninfo(), connect_timeout=10) as conn:
             cur = conn.cursor()
             cur.execute("""
                 SELECT EXISTS (
@@ -255,7 +171,23 @@ class ProjectDB:
                 )
             """)
             if cur.fetchone()[0]:
-                print("[ProjectDB] projects table already exists, skipping CREATE")
+                print("[ProjectDB] projects table already exists")
+                cur.execute("""
+                    SELECT column_name FROM information_schema.columns
+                    WHERE table_schema = 'public' AND table_name = 'projects'
+                """)
+                existing_cols = {row[0] for row in cur.fetchall()}
+                try:
+                    if "messages" not in existing_cols:
+                        cur.execute("ALTER TABLE projects ADD COLUMN messages TEXT NOT NULL DEFAULT '[]'")
+                        print("[ProjectDB] Added messages column")
+                    if "trace_ids" in existing_cols:
+                        cur.execute("ALTER TABLE projects DROP COLUMN trace_ids")
+                        print("[ProjectDB] Dropped trace_ids column")
+                    conn.commit()
+                except Exception as e:
+                    conn.rollback()
+                    print(f"[ProjectDB] Schema migration skipped (not owner?): {e}")
                 return
             cur.execute("""
                 CREATE TABLE projects (
@@ -263,129 +195,111 @@ class ProjectDB:
                     user_id TEXT NOT NULL,
                     name TEXT NOT NULL,
                     messages TEXT NOT NULL DEFAULT '[]',
-                    agent_steps TEXT DEFAULT '[]',
+                    agent_steps TEXT NOT NULL DEFAULT '{}',
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
             """)
-            cur.execute("""
-                CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id)
-            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id)")
             conn.commit()
 
-    # -- Connection helpers -------------------------------------------------
+    _TOKEN_LIFETIME = 3000  # refresh after 50 min (tokens last ~1 hour)
 
     @contextmanager
     def _conn(self):
-        if self._use_pg:
-            import psycopg
+        """Yield a Postgres connection, proactively refreshing the token before expiry."""
+        import psycopg
+        import time
+        if time.monotonic() - self._token_issued_at > self._TOKEN_LIFETIME:
             try:
-                with psycopg.connect(self._build_conninfo(), connect_timeout=10) as conn:
-                    yield conn
-            except Exception as e:
-                # Token may have expired or compute may have scaled to zero
-                print(f"[ProjectDB] Connection failed ({e}), refreshing token and retrying...")
                 self._refresh_token()
-                try:
-                    self._connect_with_retry(self._build_conninfo(), max_retries=3, base_delay=0.5)
-                    with psycopg.connect(self._build_conninfo(), connect_timeout=10) as conn:
-                        yield conn
-                except Exception as retry_err:
-                    print(f"[ProjectDB] Retry also failed: {retry_err}")
-                    raise
-        else:
-            conn = sqlite3.connect(self._sqlite_path)
-            conn.row_factory = sqlite3.Row
-            try:
+            except Exception as e:
+                print(f"[ProjectDB] Proactive token refresh failed: {e}")
+        try:
+            with psycopg.connect(self._build_conninfo(), connect_timeout=10) as conn:
                 yield conn
-            finally:
-                conn.close()
-
-    def _cursor(self, conn):
-        """Return a cursor. For Postgres, use dict_row factory."""
-        if self._use_pg:
-            import psycopg.rows
-            return conn.cursor(row_factory=psycopg.rows.dict_row)
-        return conn.cursor()
-
-    def _placeholder(self) -> str:
-        """Return the parameterized query placeholder for the current backend."""
-        return "%s" if self._use_pg else "?"
+        except psycopg.OperationalError as e:
+            print(f"[ProjectDB] Connection failed ({e}), refreshing token...")
+            self._refresh_token()
+            self._connect_with_retry(self._build_conninfo(), max_retries=3, base_delay=0.5)
+            with psycopg.connect(self._build_conninfo(), connect_timeout=10) as conn:
+                yield conn
 
     # -- CRUD ---------------------------------------------------------------
 
     def list_projects(self, user_id: str) -> list[dict]:
-        p = self._placeholder()
         with self._conn() as conn:
-            cur = self._cursor(conn)
+            import psycopg.rows
+            cur = conn.cursor(row_factory=psycopg.rows.dict_row)
             cur.execute(
-                f"SELECT id, name, created_at, updated_at FROM projects "
-                f"WHERE user_id = {p} ORDER BY updated_at DESC",
+                "SELECT id, name, created_at, updated_at FROM projects "
+                "WHERE user_id = %s ORDER BY updated_at DESC",
                 (user_id,),
             )
-            rows = cur.fetchall()
-            return [dict(r) for r in rows]
+            return [dict(r) for r in cur.fetchall()]
 
     def create_project(self, user_id: str, name: str) -> dict:
-        p = self._placeholder()
         project_id = str(uuid4())
         now = datetime.now(timezone.utc).isoformat()
         with self._conn() as conn:
-            cur = self._cursor(conn)
-            cur.execute(
-                f"INSERT INTO projects (id, user_id, name, messages, agent_steps, created_at, updated_at) "
-                f"VALUES ({p}, {p}, {p}, '[]', '[]', {p}, {p})",
+            conn.cursor().execute(
+                "INSERT INTO projects (id, user_id, name, messages, agent_steps, created_at, updated_at) "
+                "VALUES (%s, %s, %s, '[]', '{}', %s, %s)",
                 (project_id, user_id, name, now, now),
             )
             conn.commit()
-        return {"id": project_id, "name": name, "messages": [], "agent_steps": [], "created_at": now, "updated_at": now}
+        return {
+            "id": project_id, "name": name, "messages": [],
+            "agent_steps": {},
+            "created_at": now, "updated_at": now,
+        }
 
     def get_project(self, project_id: str) -> Optional[dict]:
-        p = self._placeholder()
         with self._conn() as conn:
-            cur = self._cursor(conn)
-            cur.execute(f"SELECT * FROM projects WHERE id = {p}", (project_id,))
+            import psycopg.rows
+            cur = conn.cursor(row_factory=psycopg.rows.dict_row)
+            cur.execute("SELECT * FROM projects WHERE id = %s", (project_id,))
             row = cur.fetchone()
             if row is None:
                 return None
             d = dict(row)
-            d["messages"] = json.loads(d["messages"])
-            d["agent_steps"] = json.loads(d["agent_steps"])
+            d.pop("user_id", None)
+            d["messages"] = json.loads(d.get("messages", "[]"))
+            d["agent_steps"] = json.loads(d.get("agent_steps", "{}"))
             return d
 
     def update_project(self, project_id: str, name: Optional[str] = None,
                        messages: Optional[list] = None,
-                       agent_steps: Optional[list] = None) -> Optional[dict]:
-        p = self._placeholder()
+                       agent_steps=None) -> Optional[dict]:
         with self._conn() as conn:
-            cur = self._cursor(conn)
-            cur.execute(f"SELECT id FROM projects WHERE id = {p}", (project_id,))
+            import psycopg.rows
+            cur = conn.cursor(row_factory=psycopg.rows.dict_row)
+            cur.execute("SELECT id FROM projects WHERE id = %s", (project_id,))
             if cur.fetchone() is None:
                 return None
             now = datetime.now(timezone.utc).isoformat()
-            updates: list[str] = [f"updated_at = {p}"]
+            updates = ["updated_at = %s"]
             params: list = [now]
             if name is not None:
-                updates.append(f"name = {p}")
+                updates.append("name = %s")
                 params.append(name)
             if messages is not None:
-                updates.append(f"messages = {p}")
+                updates.append("messages = %s")
                 params.append(json.dumps(messages))
             if agent_steps is not None:
-                updates.append(f"agent_steps = {p}")
+                updates.append("agent_steps = %s")
                 params.append(json.dumps(agent_steps))
             params.append(project_id)
             cur.execute(
-                f"UPDATE projects SET {', '.join(updates)} WHERE id = {p}", params
+                f"UPDATE projects SET {', '.join(updates)} WHERE id = %s", params
             )
             conn.commit()
         return self.get_project(project_id)
 
     def delete_project(self, project_id: str) -> bool:
-        p = self._placeholder()
         with self._conn() as conn:
-            cur = self._cursor(conn)
-            cur.execute(f"DELETE FROM projects WHERE id = {p}", (project_id,))
+            cur = conn.cursor()
+            cur.execute("DELETE FROM projects WHERE id = %s", (project_id,))
             deleted = cur.rowcount > 0
             conn.commit()
             return deleted
@@ -433,19 +347,20 @@ DATABRICKS_HOST = _resolve_databricks_host()
 
 def _get_workspace_client() -> WorkspaceClient:
     global _workspace_client
+    if _workspace_client is not None:
+        return _workspace_client
     try:
-        _workspace_client = db._sp_client
-    except Exception as e:
-        kwargs = {}
-        if DATABRICKS_HOST:
-            kwargs["host"] = DATABRICKS_HOST
-        _workspace_client = WorkspaceClient(**kwargs)
+        _workspace_client = WorkspaceClient()
+    except Exception:
+        if db._sp_client is not None:
+            _workspace_client = db._sp_client
+        else:
+            raise
     return _workspace_client
 
 # Initialize project database — runs at import time (before the async event loop
 # starts) to avoid generator/async conflicts with the synchronous SDK + psycopg calls.
-db = ProjectDB(sqlite_path=os.getenv("PROJECTS_DB_PATH", "projects.db"))
-db.init()
+db = ProjectDB()
 
 # ---------------------------------------------------------------------------
 # User identity — cached after first resolution
@@ -490,15 +405,14 @@ async def get_user(request: Request):
     In Databricks Apps, the platform injects X-Forwarded-* headers.
     Locally, resolves from Databricks CLI auth (cached after first call).
     """
-    # Production: Databricks Apps forwards headers
-    forwarded_user = request.headers.get("X-Forwarded-User")
-    if forwarded_user:
-        return {
-            "user_name": request.headers.get("X-Forwarded-Preferred-Username") or forwarded_user,
-            "user_email": request.headers.get("X-Forwarded-Email") or forwarded_user,
-            "user_id": forwarded_user,
-        }
-
+    # # Production: Databricks Apps forwards headers
+    # forwarded_user = request.headers.get("X-Forwarded-User")
+    # if forwarded_user:
+    #     return {
+    #         "user_name": request.headers.get("X-Forwarded-Preferred-Username") or forwarded_user,
+    #         "user_email": request.headers.get("X-Forwarded-Email") or forwarded_user,
+    #         "user_id": forwarded_user,
+    #     }
     # Local dev: resolve from Databricks CLI auth
     return _resolve_local_user()
 
@@ -512,6 +426,7 @@ class Message(BaseModel):
 
 class CustomInputs(BaseModel):
     thread_id: str
+    user_id: Optional[str] = None
 
 class AgentRequest(BaseModel):
     input: List[Message]
@@ -526,7 +441,7 @@ class CreateProjectRequest(BaseModel):
 class UpdateProjectRequest(BaseModel):
     name: Optional[str] = None
     messages: Optional[list] = None
-    agent_steps: Union[list, dict, None] = None  # frontend sends {toolCallGroups, genieGroups}
+    agent_steps: Union[list, dict, None] = None  # {toolCallGroups, genieGroups}
 
 # ---------------------------------------------------------------------------
 # Agent proxy endpoint
@@ -572,10 +487,13 @@ async def call_agent_stream(request: AgentRequest):
                 enhanced = build_prompt_with_skill(last_msg["content"], request.skill_name)
                 messages[-1] = {"role": last_msg["role"], "content": enhanced}
 
+            custom_inputs = {"thread_id": request.custom_inputs.thread_id}
+            if request.custom_inputs.user_id:
+                custom_inputs["user_id"] = request.custom_inputs.user_id
+
             input_dict = {
                 "input": messages,
-                "custom_inputs": {"thread_id": request.custom_inputs.thread_id},
-                "databricks_options": {"return_trace": True},
+                "custom_inputs": custom_inputs,
                 "stream": True,
             }
 
@@ -662,7 +580,7 @@ async def call_agent_stream(request: AgentRequest):
 
             # Parse the trace for tool_calls and genie results
             if trace_id:
-                trace = get_trace(trace_id, retries=3, delay=1.0)
+                trace = get_trace(trace_id, retries=3, delay=1.5)
                 if trace:
                     parsed = parse_trace_for_ui(_serialize_trace(trace))
                     print(f"parsed: {parsed}")
@@ -904,31 +822,22 @@ def parse_trace_for_ui(trace_dict: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Tools endpoint — serve the tools manifest
+# Tools endpoint — introspected from the live agent
 # ---------------------------------------------------------------------------
-
-# Locate tools.txt – check react-app root first (deployed), then Streamlit app dir (local dev)
-_tools_candidates = [
-    Path(__file__).resolve().parent.parent / "tools.txt",           # react-app/tools.txt
-    Path(__file__).resolve().parent.parent.parent / "app" / "tools.txt",  # apps/app/tools.txt
-]
-_TOOLS_PATH = next((p for p in _tools_candidates if p.exists()), _tools_candidates[0])
 
 @app.get("/api/tools")
 async def get_tools():
-    """Return available tools grouped by agent, loaded from tools.txt."""
-    if not _TOOLS_PATH.exists():
-        return []
-    groups: dict[str, list[dict]] = {}
-    with open(_TOOLS_PATH) as f:
-        for i, line in enumerate(f):
-            if i == 0:
-                continue  # skip header
-            parts = line.strip().split("\t")
-            if len(parts) >= 3:
-                agent, tool_name, description = parts[0], parts[1], parts[2]
-                groups.setdefault(agent, []).append({"name": tool_name, "description": description})
-    return groups
+    """Return available tools grouped by agent, proxied from the agent server."""
+    try:
+        resp = requests.get(
+            f"http://0.0.0.0:{AGENT_PORT}/agent-tools",
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    return {}
 
 # ---------------------------------------------------------------------------
 # Skills – discover, load, and build prompts with skill instructions
@@ -1089,22 +998,102 @@ async def get_skills():
 
 @app.get("/api/health")
 async def health_check():
-    """Health check endpoint — also reports which DB backend is active."""
-    if db._use_pg:
-        db_backend = "lakebase-autoscaling"
-        db_detail = f"{db._lakebase_endpoint_name} / {db._lakebase_database}"
-    else:
-        db_backend = "sqlite"
-        db_detail = db._sqlite_path
+    """Health check endpoint — includes MCP server reachability."""
     result = {
         "status": "healthy",
         "host": DATABRICKS_HOST or "(resolved by SDK auth)",
-        "db_backend": db_backend,
-        "db_detail": db_detail,
+        "db_backend": "lakebase-autoscaling",
+        "db_detail": f"{db._lakebase_endpoint_name} / {db._lakebase_database}",
+        "agent_memory": "AsyncDatabricksStore (Lakebase)",
     }
     if db._last_lakebase_error:
         result["lakebase_init_error"] = db._last_lakebase_error
+
+    mcp_results = await _check_all_mcp_servers()
+    if mcp_results:
+        result["mcp_servers"] = mcp_results
+        if any(not s["ok"] for s in mcp_results):
+            result["status"] = "degraded"
+
     return result
+
+
+# ---------------------------------------------------------------------------
+# External MCP server health checks
+# ---------------------------------------------------------------------------
+
+_MCP_SERVERS = None
+
+def _get_mcp_servers() -> dict[str, str]:
+    """Load external MCP server URLs from config.yml (cached)."""
+    global _MCP_SERVERS
+    if _MCP_SERVERS is None:
+        cfg = _load_config()
+        _MCP_SERVERS = cfg.get("external_mcp", {}) if cfg else {}
+    return _MCP_SERVERS
+
+
+def _check_mcp_server(name: str, url: str, timeout: float = 5.0) -> dict:
+    """Ping an MCP server with a proper JSON-RPC initialize request.
+
+    Categorises the result as:
+      ok=True  — server responded to the MCP handshake (2xx)
+      ok=True, status="reachable"  — server responded but rejected the
+                                     request (e.g. 406, 4xx, 5xx)
+      ok=False — connection refused, timeout, or other transport error
+    """
+    mcp_init = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "health-check", "version": "0.1.0"},
+        },
+    }
+    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    if "glama.ai" in url:
+        headers["Authorization"] = f"Bearer {get_secret(scope='aichemy', key=f'{name}_glama_api')}"
+    try:
+        resp = requests.post(url, json=mcp_init, headers=headers, timeout=timeout)
+        if resp.status_code < 400:
+            return {"name": name, "url": url, "ok": True, "status_code": resp.status_code}
+        return {
+            "name": name, "url": url, "ok": True, "status": "reachable",
+            "status_code": resp.status_code, "detail": resp.reason,
+        }
+    except requests.exceptions.ConnectionError:
+        return {"name": name, "url": url, "ok": False, "error": "connection_refused"}
+    except requests.exceptions.Timeout:
+        return {"name": name, "url": url, "ok": False, "error": "timeout"}
+    except Exception as e:
+        return {"name": name, "url": url, "ok": False, "error": str(e)}
+
+
+async def _check_all_mcp_servers() -> list[dict]:
+    """Check reachability of all configured external MCP servers in parallel."""
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    servers = _get_mcp_servers()
+    if not servers:
+        return []
+
+    loop = asyncio.get_running_loop()
+    with ThreadPoolExecutor(max_workers=len(servers)) as pool:
+        futures = [
+            loop.run_in_executor(pool, _check_mcp_server, name, url)
+            for name, url in servers.items()
+        ]
+        return list(await asyncio.gather(*futures))
+
+
+@app.get("/api/mcp/status")
+async def mcp_status():
+    """Check reachability of external MCP servers (OpenTargets, PubChem, PubMed)."""
+    return {"servers": await _check_all_mcp_servers()}
+
 
 # ---------------------------------------------------------------------------
 # Agent status + warmup — proxied from the AgentServer
@@ -1134,6 +1123,7 @@ async def agent_warmup():
         return resp.json()
     except Exception as e:
         return {"ok": False, "detail": str(e)}
+
 
 
 # ---------------------------------------------------------------------------
@@ -1166,20 +1156,10 @@ async def debug_lakebase(request: Request):
 
     # Step 2: SP credentials
     try:
-        sp_client_id = os.getenv("SP_CLIENT_ID")
-        sp_client_secret = os.getenv("SP_CLIENT_SECRET")
-        source = "env"
-        if not (sp_client_id and sp_client_secret):
-            from base64 import b64decode
-            w = _get_workspace_client()
-            sp_id_b64 = w.secrets.get_secret("aichemy", "client_id").value
-            sp_secret_b64 = w.secrets.get_secret("aichemy", "client_secret").value
-            sp_client_id = b64decode(sp_id_b64).decode("utf-8")
-            sp_client_secret = b64decode(sp_secret_b64).decode("utf-8")
-            source = "secrets_api"
+        sp_client_id = get_secret(scope='aichemy', key='client_id')
+        sp_client_secret = get_secret(scope='aichemy', key='client_secret')
         steps["2_sp_credentials"] = {
-            "ok": True,
-            "source": source,
+            "ok": bool(sp_client_id and sp_client_secret),
             "client_id_prefix": sp_client_id[:8] + "..." if sp_client_id else None,
         }
     except Exception as e:
