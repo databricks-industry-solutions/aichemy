@@ -532,6 +532,7 @@ async def call_agent_stream(request: AgentRequest):
             accumulated_output = []
             trace_id = None
 
+            seen_event_types = []
             for line in resp.iter_lines(decode_unicode=True):
                 if line is None:
                     continue
@@ -548,6 +549,7 @@ async def call_agent_stream(request: AgentRequest):
                 except json.JSONDecodeError:
                     continue
                 ev_type = event.get("type")
+                seen_event_types.append(ev_type)
                 if ev_type == "response.output_item.done":
                     item = event.get("item")
                     if item:
@@ -560,13 +562,8 @@ async def call_agent_stream(request: AgentRequest):
                 elif "trace_id" in event:
                     trace_id = event["trace_id"]
 
-            # If the stream ended without any output, the agent likely errored out
-            if not accumulated_output:
-                yield _sse({"type": "error", "content": "Agent stream ended without producing output. Check agent logs for details."})
-
-            # Response fully consumed — use trace_id from stream if present
-            if trace_id:
-                print(f"trace_id: {trace_id}")
+            print(f"[stream] SSE event types received: {seen_event_types}")
+            print(f"[stream] accumulated_output items: {len(accumulated_output)}, trace_id: {trace_id}")
 
             # Existing thread: stream only the last message item to avoid repeating previous responses
             if not is_new_thread and accumulated_output:
@@ -578,17 +575,50 @@ async def call_agent_stream(request: AgentRequest):
                 )
                 yield from stream_new_content(last_msg, _sse)
 
-            # Parse the trace for tool_calls and genie results
+            # Emit trace_id so the frontend can render the link
             if trace_id:
-                trace = get_trace(trace_id, retries=3, delay=1.5)
-                if trace:
-                    parsed = parse_trace_for_ui(_serialize_trace(trace))
-                    print(f"parsed: {parsed}")
-                    if parsed["tool_calls"]:
-                        yield _sse({"type": "tool_calls", "data": parsed["tool_calls"]})
-                    if parsed["genie_results"]:
-                        yield _sse({"type": "genie", "data": parsed["genie_results"]})
+                print(f"trace_id: {trace_id}")
                 yield _sse({"type": "trace_id", "trace_id": trace_id})
+
+            # If SSE parsing captured no output, fall back to extracting
+            # the response text from the trace itself.
+            if not accumulated_output and trace_id:
+                print(f"[stream] No output from SSE events, falling back to trace extraction...")
+                try:
+                    trace = get_trace(trace_id, retries=5, delay=2.0)
+                    if trace:
+                        trace_dict = _serialize_trace(trace)
+                        parsed = parse_trace_for_ui(trace_dict)
+                        if parsed["tool_calls"]:
+                            yield _sse({"type": "tool_calls", "data": parsed["tool_calls"]})
+                        if parsed["genie_results"]:
+                            yield _sse({"type": "genie", "data": parsed["genie_results"]})
+                        # Extract the final text from the root span's outputs
+                        fallback_text = _extract_text_from_trace(trace_dict)
+                        if fallback_text:
+                            yield _sse({"type": "text", "content": fallback_text})
+                        else:
+                            yield _sse({"type": "error", "content": "Agent produced a trace but no readable output was found."})
+                    else:
+                        yield _sse({"type": "error", "content": "Agent stream ended without producing output. Check agent logs for details."})
+                except Exception as e:
+                    print(f"[stream] Failed to parse trace {trace_id}: {e}")
+                    yield _sse({"type": "error", "content": f"Failed to extract output from trace: {e}"})
+            elif not accumulated_output:
+                yield _sse({"type": "error", "content": "Agent stream ended without producing output. Check agent logs for details."})
+            elif trace_id:
+                # Normal path: SSE parsing worked, parse trace for tool_calls/genie
+                try:
+                    trace = get_trace(trace_id, retries=3, delay=1.0)
+                    if trace:
+                        parsed = parse_trace_for_ui(_serialize_trace(trace))
+                        print(f"parsed: {parsed}")
+                        if parsed["tool_calls"]:
+                            yield _sse({"type": "tool_calls", "data": parsed["tool_calls"]})
+                        if parsed["genie_results"]:
+                            yield _sse({"type": "genie", "data": parsed["genie_results"]})
+                except Exception as e:
+                    print(f"[stream] Failed to parse trace {trace_id}: {e}")
 
         except requests.exceptions.ConnectionError as e:
             yield _sse({"type": "error", "content": f"Lost connection to agent server: {e}"})
@@ -654,8 +684,11 @@ def _serialize_trace(trace) -> dict:
 async def api_get_trace(trace_id: str):
     """Fetch an MLflow trace by ID (with retries for async write delay)."""
     import asyncio
+    import functools
     loop = asyncio.get_running_loop()
-    trace = await loop.run_in_executor(None, get_trace, trace_id)
+    trace = await loop.run_in_executor(
+        None, functools.partial(get_trace, trace_id, retries=5, delay=2)
+    )
     if trace is None:
         raise HTTPException(status_code=404, detail=f"Trace '{trace_id}' not found after retries")
     return _serialize_trace(trace)
@@ -819,6 +852,67 @@ def parse_trace_for_ui(trace_dict: dict) -> dict:
         "tool_calls": extract_all_tool_calls(trace_dict),
         "genie_results": parse_genie_results(trace_dict),
     }
+
+
+def _extract_text_from_trace(trace_dict: dict) -> Optional[str]:
+    """Extract the final assistant text from a serialized trace.
+
+    Searches all spans for text output in multiple formats:
+    1. LangGraph: last AI message in outputs.messages (type=ai or role=assistant)
+    2. Responses API: output items with output_text blocks
+    3. ChatCompletion: choices[].message.content
+    4. Direct string outputs on any span
+    """
+    spans = trace_dict.get("spans", [])
+    if not spans:
+        return None
+
+    # Search all spans (root first, then children) for recognizable text
+    root = next((s for s in spans if not s.get("parent_id")), None)
+    ordered = ([root] + [s for s in spans if s is not root]) if root else spans
+
+    for span in ordered:
+        outputs = span.get("outputs")
+        if outputs is None:
+            continue
+
+        if isinstance(outputs, dict):
+            # LangGraph: {"messages": [{"type": "human", "content": "..."}, {"type": "ai", "content": "..."}]}
+            # Take the last AI/assistant message
+            messages = outputs.get("messages", [])
+            if messages:
+                for msg in reversed(messages):
+                    if not isinstance(msg, dict):
+                        continue
+                    msg_type = msg.get("type", "")
+                    msg_role = msg.get("role", "")
+                    if msg_type in ("ai", "ai_message") or msg_role == "assistant":
+                        content = msg.get("content")
+                        if isinstance(content, str) and content.strip():
+                            return strip_tool_call_tags(content)
+
+            # Responses API: {"output": [{"type": "message", "content": [{"type": "output_text", "text": "..."}]}]}
+            for item in outputs.get("output", []):
+                if isinstance(item, dict) and item.get("type") == "message":
+                    for block in item.get("content") or []:
+                        if isinstance(block, dict) and block.get("type") == "output_text" and block.get("text"):
+                            text = strip_tool_call_tags(block["text"])
+                            if text:
+                                return text
+
+            # ChatCompletion: {"choices": [{"message": {"content": "..."}}]}
+            for choice in outputs.get("choices", []):
+                if isinstance(choice, dict):
+                    msg = choice.get("message") or {}
+                    content = msg.get("content")
+                    if isinstance(content, str) and content.strip():
+                        return strip_tool_call_tags(content)
+
+        # Plain string output
+        if isinstance(outputs, str) and outputs.strip():
+            return strip_tool_call_tags(outputs)
+
+    return None
 
 
 # ---------------------------------------------------------------------------

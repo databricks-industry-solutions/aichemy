@@ -101,9 +101,15 @@ def get_trace(trace_id: str, retries: int = 5, delay: float = 2.0):
                 state = str(getattr(trace.info, "state", ""))
                 spans = trace.data.spans if trace.data else []
                 if state in _TERMINAL and len(spans) > 0:
+                    print(f"[get_trace] Attempt {attempt+1}/{retries}: trace ready "
+                          f"(state={state}, spans={len(spans)})")
                     return trace
-        except Exception:
-            pass
+                print(f"[get_trace] Attempt {attempt+1}/{retries}: trace exists but not terminal "
+                      f"(state={state}, spans={len(spans)}), retrying...")
+            else:
+                print(f"[get_trace] Attempt {attempt+1}/{retries}: trace not found yet, retrying...")
+        except Exception as e:
+            print(f"[get_trace] Attempt {attempt+1}/{retries}: exception {type(e).__name__}: {e}, retrying...")
         if attempt < retries - 1:
             time.sleep(delay)
     # Last-ditch: return whatever we have (may be incomplete)
@@ -111,6 +117,7 @@ def get_trace(trace_id: str, retries: int = 5, delay: float = 2.0):
         return mlflow.get_trace(trace_id=trace_id)
     except Exception:
         return None
+
 
 
 # ---------------------------------------------------------------------------

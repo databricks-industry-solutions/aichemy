@@ -1,16 +1,16 @@
-host: https://fevm-aichemy2.cloud.databricks.com/
-catalog: aichemy2_catalog
-schema: aichemy
-experiment_id: 1001868044455114
+host: https://e2-demo-west.cloud.databricks.com/
+catalog: healthcare_lifesciences
+schema: qsar
+experiment_id: 976725379793240
 llm_endpoint: databricks-claude-opus-4-5
 genie:
   drugbank:
-    space_id: 01f0eaa5825418ce88ec537abc57fd77
-    table: aichemy2_catalog.aichemy.drugbank_full
+    space_id: 01f068270f5c1f898e11703361dce5b8
+    table: healthcare_lifesciences.qsar.drugbank_full
 uc_functions:
   chem_utils:
-    - aichemy2_catalog.aichemy.get_embedding
-    - aichemy2_catalog.aichemy.molecule_png_url
+    - healthcare_lifesciences.qsar.get_embedding
+    - healthcare_lifesciences.qsar.molecule_png_url
 # uc_connections:
 #   pubchem: conn_aichemy_pubchem
 #   pubmed: conn_aichemy_pubmed
@@ -21,9 +21,9 @@ external_mcp:
   opentargets: https://mcp.platform.opentargets.org/mcp
 retriever:
   zinc_molecular_search:
-    vs_endpoint: zinc_vs
-    vs_index: aichemy2_catalog.aichemy.zinc_vs
-    vs_source: aichemy2_catalog.aichemy.zinc15_250k_full
+    vs_endpoint: dbdemos_vs_endpoint
+    vs_index: healthcare_lifesciences.qsar.zinc_vs
+    vs_source: healthcare_lifesciences.qsar.zinc15_250k_full
     embedding: databricks-bge-large-en
     k: 5
     text_column: smiles
@@ -35,11 +35,10 @@ retriever:
     - purchasable
     search_type: vector
     tool_description: Search for drug-like chemicals in the ZINC database based on ECFP molecular fingerprint embeddings
-# for app
 lakebase:
-  project_id: 4ace19ac-439a-4edd-9eb4-e053d3990938
-  branch_id: br-patient-hat-d1i3ijt8
-  endpoint_id: ep-snowy-frost-d1ws26jv
+  project_id: 605906e9-742e-4c1a-aef4-11f64b8a74c2
+  branch_id: br-aged-scene-d1iq7b6x
+  endpoint_id: ep-twilight-union-d1f3jv1k
   database: databricks_postgres
   embedding: databricks-gte-large-en
   embedding_dim: 1024
