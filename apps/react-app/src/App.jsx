@@ -7,6 +7,7 @@ import {
   askAgentStream,
   fetchUserInfo,
   fetchDbStatus,
+  fetchMcpStatus,
   listProjects,
   createProject,
   loadProject,
@@ -38,11 +39,40 @@ const SKILL_FOLDER_BY_WORKFLOW = {
 }
 
 const EXAMPLE_QUESTIONS = [
-  "Get the latest review study on the GI toxicity of danuglipron",
   "What diseases are associated with EGFR",
-  "Show me compounds similar to vemurafenib. Display their structures",
   "List all the drugs in the GLP-1 agonists ATC class in DrugBank",
+  "Get the latest review study on the GI toxicity of danuglipron",
+  "Show me compounds similar to vemurafenib. Display their structures",
 ]
+
+const TOPIC_SNIPPET_MAX = 48
+
+function formatProjectDateTime(d = new Date()) {
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
+/** Title after first user message: query snippet + timestamp */
+function buildTopicProjectName(firstQuery) {
+  const when = formatProjectDateTime()
+  const raw = firstQuery.replace(/\s+/g, ' ').trim()
+  if (!raw) return `Chat · ${when}`
+  const snippet =
+    raw.length > TOPIC_SNIPPET_MAX
+      ? `${raw.slice(0, TOPIC_SNIPPET_MAX - 1)}…`
+      : raw
+  return `${snippet} · ${when}`
+}
+
+/** Sidebar "New Project" before any message is sent */
+function buildNewChatPlaceholderName() {
+  return `New chat · ${formatProjectDateTime()}`
+}
 
 export default function App() {
   // Project state
@@ -69,8 +99,12 @@ export default function App() {
 
   // DB backend status
   const [dbStatus, setDbStatus] = useState(null)
+  // External MCP server status (OpenTargets, PubChem, PubMed)
+  const [mcpStatus, setMcpStatus] = useState({})
 
   const chatHistoryRef = useRef(null)
+  /** True when project was created via "+ New Project" (rename on first message) */
+  const pendingTopicNameFromQueryRef = useRef(false)
 
   // Auto-scroll chat to bottom
   useEffect(() => {
@@ -86,9 +120,10 @@ export default function App() {
   useEffect(() => {
     async function init() {
       try {
-        const [user, status] = await Promise.all([fetchUserInfo(), fetchDbStatus()])
+        const [user, status, mcp] = await Promise.all([fetchUserInfo(), fetchDbStatus(), fetchMcpStatus()])
         setUserInfo(user)
         setDbStatus(status)
+        setMcpStatus(mcp)
         const list = await listProjects(user.user_id)
         setProjects(list)
         if (list.length > 0) {
@@ -134,6 +169,7 @@ export default function App() {
   const switchToProject = async (projectId) => {
     if (projectId === currentProjectId) return
     try {
+      pendingTopicNameFromQueryRef.current = false
       const project = await loadProject(projectId)
       setCurrentProjectId(project.id)
       setCurrentProjectName(project.name)
@@ -150,8 +186,11 @@ export default function App() {
   }
 
   const handleNewProject = async (name) => {
+    const explicit = typeof name === 'string' && name.trim().length > 0
     try {
-      const project = await createProject(name || 'Untitled Project', userInfo.user_id)
+      pendingTopicNameFromQueryRef.current = !explicit
+      const resolvedName = explicit ? name.trim() : buildNewChatPlaceholderName()
+      const project = await createProject(resolvedName, userInfo.user_id)
       await refreshProjectList()
       setCurrentProjectId(project.id)
       setCurrentProjectName(project.name)
@@ -225,6 +264,23 @@ export default function App() {
   const handleSendMessage = async (prompt, { skillName } = {}) => {
     if (!prompt.trim() || isLoading) return
 
+    const isNewThread = messages.length === 0
+    if (
+      isNewThread &&
+      pendingTopicNameFromQueryRef.current &&
+      currentProjectId
+    ) {
+      pendingTopicNameFromQueryRef.current = false
+      const topicName = buildTopicProjectName(prompt)
+      try {
+        await saveProject(currentProjectId, { name: topicName })
+        setCurrentProjectName(topicName)
+        await refreshProjectList()
+      } catch (err) {
+        console.error('Failed to set project title from first message:', err)
+      }
+    }
+
     setIsLoading(true)
     setSelectedWorkflow(null)
 
@@ -238,7 +294,8 @@ export default function App() {
     try {
       const inputDict = {
         input: [{ role: 'user', content: prompt }],
-        custom_inputs: { thread_id: currentProjectId },
+        custom_inputs: { thread_id: currentProjectId, user_id: userInfo.user_id },
+        new_thread: isNewThread,
       }
       // If skills are enabled, attach the skill_name so the backend wraps the prompt
       if (skillName) {
@@ -265,6 +322,16 @@ export default function App() {
         },
         onGenie: (results) => {
           setGenieGroups(prev => [...prev, { prompt, results }])
+        },
+        onTraceId: (traceId) => {
+          setMessages(prev => {
+            const updated = [...prev]
+            const last = updated[updated.length - 1]
+            if (last?.role === 'assistant') {
+              updated[updated.length - 1] = { ...last, traceId }
+            }
+            return updated
+          })
         },
         onError: (errMsg) => {
           setMessages(prev => {
@@ -316,7 +383,7 @@ export default function App() {
         onSelectWorkflow={setSelectedWorkflow}
         skillsEnabled={skillsEnabled}
         onToggleSkills={setSkillsEnabled}
-        dbStatus={dbStatus}
+        userInfo={userInfo}
       />
       <main className="main-content">
         <ChatPanel
@@ -339,6 +406,8 @@ export default function App() {
           toolCallGroups={toolCallGroups}
           genieGroups={genieGroups}
           isLoading={isLoading}
+          dbStatus={dbStatus}
+          mcpStatus={mcpStatus}
         />
       </main>
     </div>

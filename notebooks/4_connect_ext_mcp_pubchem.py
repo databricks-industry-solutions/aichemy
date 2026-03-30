@@ -1,6 +1,7 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Wrap PubChem External MCP in a UC HTTP Connection
+
 # COMMAND ----------
 
 # MAGIC %pip install -U databricks-mcp databricks-sdk databricks-langchain mlflow
@@ -17,7 +18,7 @@ from databricks.sdk import WorkspaceClient
 import mlflow
 from mlflow.models import ModelConfig
 
-cfg = ModelConfig(development_config="config.yml")
+cfg = ModelConfig(development_config="../apps/react-app/config.yml")
 
 mlflow.langchain.autolog()
 
@@ -141,21 +142,53 @@ response = ws_client.serving_endpoints.http_request(
   json={"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2},
   headers={"Content-Type": "application/json",
     "Accept": "application/json, text/event-stream",
-    "Mcp-Session-Id": "d47738ae-7d76-409f-b8d0-b553fe640f3e"}\
+    "Mcp-Session-Id": "81992b9a-d0d4-4b57-81c0-5911ee817acf"}\
 )
 pprint(response.__dict__)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Option 3: `DatabricksMCPClient`
+# MAGIC ## Option 3: `DatabricksMultiServerMCPClient` from `databricks-langchain`
+
+# COMMAND ----------
+
+from databricks_langchain import DatabricksMCPServer, DatabricksMultiServerMCPClient
+import asyncio
+
+mcp_client = DatabricksMultiServerMCPClient([
+    DatabricksMCPServer(
+        name="pubchem",
+        url=f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("pubchem")}',
+    )
+])
+await mcp_client.get_tools()
+
+# COMMAND ----------
+
+server_name = None
+server_names = [server_name] if server_name is not None else list(mcp_client.connections.keys())
+print(server_names)
+load_tool_tasks = [
+    asyncio.create_task(
+        super(DatabricksMultiServerMCPClient, mcp_client).get_tools(server_name=name)
+    )
+    for name in server_names
+]
+tools_list = await asyncio.gather(*load_tool_tasks,  return_exceptions=True)
+tools_list
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Option 4: `DatabricksMCPClient`
 # MAGIC Needs to be patched to disable zstd decoding and allow kwargs into `streamablehttp_client`
 
 # COMMAND ----------
 
 # Use the patched DatabricksMCPClient to disable zstd decoding
 # from databricks_mcp import DatabricksMCPClient
-from src.databricks_mcp_client import DatabricksMCPClient
+from databricks_mcp_client import DatabricksMCPClient
 import nest_asyncio
 
 nest_asyncio.apply()

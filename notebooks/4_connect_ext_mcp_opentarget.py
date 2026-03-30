@@ -3,6 +3,7 @@
 # MAGIC # Wrap OpenTargets External MCP in a UC HTTP Connection
 
 # COMMAND ----------
+
 # MAGIC %pip install -U databricks-mcp databricks-sdk databricks-langchain mlflow
 # MAGIC %restart_python
 
@@ -21,7 +22,7 @@ from databricks.sdk import WorkspaceClient
 import mlflow
 from mlflow.models import ModelConfig
 
-cfg = ModelConfig(development_config="config.yml")
+cfg = ModelConfig(development_config="../apps/react-app/config.yml")
 
 mlflow.langchain.autolog()
 
@@ -108,7 +109,7 @@ ws_client = WorkspaceClient()
 # MAGIC   headers => map(
 # MAGIC     'Content-Type', 'application/json',
 # MAGIC     'Accept', 'application/json, text/event-stream',
-# MAGIC     'Mcp-Session-Id', 'a623134b01f341c2ab532cc9ba48ff1f'
+# MAGIC     'Mcp-Session-Id', '372e098d53184d80bbf3c0e4443f469c'
 # MAGIC   )
 # MAGIC );
 
@@ -129,7 +130,7 @@ response = ws_client.serving_endpoints.http_request(
   json={"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2},
   headers={"Content-Type": "application/json",
     "Accept": "application/json, text/event-stream",
-    "Mcp-Session-Id": "a623134b01f341c2ab532cc9ba48ff1f"}\
+    "Mcp-Session-Id": "372e098d53184d80bbf3c0e4443f469c"}\
 )
 pprint(response.__dict__)
 
@@ -175,7 +176,6 @@ tools_list
 
 # Use the patched DatabricksMCPClient to disable zstd decoding
 from databricks_mcp import DatabricksMCPClient
-#from src.databricks_mcp_client import DatabricksMCPClient
 import nest_asyncio
 
 nest_asyncio.apply()

@@ -1,6 +1,7 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # Wrap PubMed External MCP in a UC HTTP Connection
+
 # COMMAND ----------
 
 # MAGIC %pip install -U databricks-mcp databricks-sdk databricks-langchain mlflow
@@ -17,7 +18,7 @@ from databricks.sdk import WorkspaceClient
 import mlflow
 from mlflow.models import ModelConfig
 
-cfg = ModelConfig(development_config="config.yml")
+cfg = ModelConfig(development_config="../apps/react-app/config.yml")
 
 mlflow.langchain.autolog()
 
@@ -120,7 +121,7 @@ os.environ["pubmed_glama_api"] = pubmed_api
 # MAGIC   headers => map(
 # MAGIC     'Content-Type', 'application/json',
 # MAGIC     'Accept', 'application/json, text/event-stream',
-# MAGIC     'Mcp-Session-Id', '2bb76a1e-3ade-4eb8-a4f0-fc9542dac62d'
+# MAGIC     'Mcp-Session-Id', '3d121730-35a1-4a68-8948-8ea7e33bf3e9'
 # MAGIC   )
 # MAGIC );
 
@@ -141,28 +142,59 @@ response = ws_client.serving_endpoints.http_request(
   json={"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2},
   headers={"Content-Type": "application/json",
     "Accept": "application/json, text/event-stream",
-    "Mcp-Session-Id": "2bb76a1e-3ade-4eb8-a4f0-fc9542dac62d"}\
+    "Mcp-Session-Id": "3d121730-35a1-4a68-8948-8ea7e33bf3e9"}\
 )
 pprint(response.__dict__)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Option 3: `DatabricksMCPClient`
+# MAGIC ## Option 3: `DatabricksMultiServerMCPClient` from `databricks-langchain`
+
+# COMMAND ----------
+
+from databricks_langchain import DatabricksMCPServer, DatabricksMultiServerMCPClient
+import asyncio
+
+mcp_client = DatabricksMultiServerMCPClient([
+    DatabricksMCPServer(
+        name="opentargets",
+        url=f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("opentargets")}',
+    )
+])
+await mcp_client.get_tools()
+
+# COMMAND ----------
+
+server_name = None
+server_names = [server_name] if server_name is not None else list(mcp_client.connections.keys())
+print(server_names)
+load_tool_tasks = [
+    asyncio.create_task(
+        super(DatabricksMultiServerMCPClient, mcp_client).get_tools(server_name=name)
+    )
+    for name in server_names
+]
+tools_list = await asyncio.gather(*load_tool_tasks,  return_exceptions=True)
+tools_list
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Option 4: `DatabricksMCPClient`
 # MAGIC Needs to be patched to disable zstd decoding and allow kwargs into `streamablehttp_client`
 
 # COMMAND ----------
 
 # Use the patched DatabricksMCPClient to disable zstd decoding
-# from databricks_mcp import DatabricksMCPClient
-from src.databricks_mcp_client import DatabricksMCPClient
+from databricks_mcp import DatabricksMCPClient
 import nest_asyncio
 
 nest_asyncio.apply()
 
 server_url = f'{cfg.get("host")}api/2.0/mcp/external/{cfg.get("uc_connections").get("pubmed")}'
 mcp_client = DatabricksMCPClient(server_url=server_url, workspace_client=ws_client)
-mcp_client.list_tools(timeout=60, terminate_on_close=False)
+mcp_client.list_tools()
 
 # COMMAND ----------
 

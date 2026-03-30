@@ -14,7 +14,7 @@
 import mlflow
 from mlflow.models import ModelConfig
 
-cfg = ModelConfig(development_config="config.yml")
+cfg = ModelConfig(development_config="../apps/react-app/config.yml")
 endpoint_name=cfg.get("retriever").get("vs_endpoint")
 vs_index=cfg.get("retriever").get("vs_index")
 
@@ -27,7 +27,7 @@ index = client.get_index(index_name=vs_index)
 
 # COMMAND ----------
 
-from src.descriptors import get_ecfp
+from descriptors import get_ecfp
 import pandas as pd
 import numpy as np
 import rdkit

@@ -38,11 +38,12 @@ export async function askAgent(inputDict) {
  * @param {function} onText - Called with each text chunk: onText(chunk)
  * @param {function} [onToolCalls] - Called with tool calls array
  * @param {function} [onGenie] - Called with genie results array
+ * @param {function} [onTraceId] - Called with MLflow trace_id when present (for linking to traces)
  * @param {function} [onStatus] - Called with status message string
  * @param {function} [onError] - Called with error string
  * @param {function} [onDone] - Called when stream completes
  */
-export async function askAgentStream(inputDict, { signal, onText, onToolCalls, onGenie, onStatus, onError, onDone } = {}) {
+export async function askAgentStream(inputDict, { signal, onText, onToolCalls, onGenie, onTraceId, onStatus, onError, onDone } = {}) {
   const url = `${API_BASE_URL}/api/agent/stream`
 
   const response = await fetch(url, {
@@ -86,6 +87,9 @@ export async function askAgentStream(inputDict, { signal, onText, onToolCalls, o
             break
           case 'genie':
             onGenie?.(event.data)
+            break
+          case 'trace_id':
+            onTraceId?.(event.trace_id)
             break
           case 'error':
             onError?.(event.content)
@@ -180,6 +184,59 @@ export async function fetchDbStatus() {
     // ignore
   }
   return { db_backend: 'unknown', db_detail: '' }
+}
+
+/**
+ * Fetch external MCP server health status (OpenTargets, PubChem, PubMed).
+ * @returns {Promise<Object>} Map of server name -> {ok, status_code, status, detail}
+ */
+export async function fetchMcpStatus() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/health`)
+    if (response.ok) {
+      const data = await response.json()
+      const status = {}
+      for (const srv of data.mcp_servers || []) {
+        status[srv.name] = srv
+      }
+      return status
+    }
+  } catch {
+    // ignore
+  }
+  return {}
+}
+
+// ---------------------------------------------------------------------------
+// Agent status + warmup
+// ---------------------------------------------------------------------------
+
+/**
+ * Check whether the backend agent is ready to serve requests.
+ * @returns {Promise<{ready: boolean, building: boolean, error: string|null}>}
+ */
+export async function fetchAgentStatus() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/agent/status`)
+    if (response.ok) return response.json()
+  } catch {
+    // agent server unreachable
+  }
+  return { ready: false, building: true, error: null }
+}
+
+/**
+ * Trigger a warmup query on the agent to pre-warm LLM endpoints, Lakebase, etc.
+ * @returns {Promise<{ok: boolean, detail: string}>}
+ */
+export async function warmupAgent() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/agent/warmup`, { method: 'POST' })
+    if (response.ok) return response.json()
+    return { ok: false, detail: `HTTP ${response.status}` }
+  } catch (e) {
+    return { ok: false, detail: e.message }
+  }
 }
 
 // ---------------------------------------------------------------------------
