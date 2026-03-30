@@ -1,77 +1,36 @@
-# Engram — Config-Driven Supervisor Agents with Persistent Memory on Databricks Apps
-
+# Super Supervisor: Declarative Supervisor Agent with Short-/Long-term Memory and React UI on Databricks Apps
 [![Databricks](https://img.shields.io/badge/Databricks-Apps-FF3621?style=for-the-badge&logo=databricks)](https://databricks.com)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Supervisor-1C3C3C?style=for-the-badge)](https://langchain-ai.github.io/langgraph/)
 [![Lakebase](https://img.shields.io/badge/Lakebase-Postgres-336791?style=for-the-badge&logo=postgresql)](https://docs.databricks.com/en/database/lakebase.html)
 
-> *In neuroscience, an **engram** is the physical trace of a memory stored in the brain.*
 
-Engram is a framework for building **memory-powered multi-agent supervisors** on Databricks. Define your subagents, tools, and prompts in a single [`config.yml`](apps/react-app/config.yml) — Engram automatically wires up the LangGraph supervisor, connects to Lakebase Autoscaling Postgres for persistent memory, and serves everything as a Databricks App with a React frontend.
+*Super Supervisor* is a declarative framework for building **memory-powered multi-agent supervisors** on Databricks. Define your subagents, tools, and prompts in a single [`config.yml`](apps/react-app/config.yml). Super Supervisor automatically assembles the LangGraph supervisor, connects to Lakebase Autoscaling Postgres for short-/long-term memory, and serves everything as a Databricks App with a React UI.
 
 ## What It Does
 
-- **One config, many agents** — A single [`config.yml`](apps/react-app/config.yml) declares your entire agent system: subagents, tools, data sources, and routing prompts. No code changes needed.
-- **Short-term memory** — Full conversation state is checkpointed to Lakebase via `AsyncCheckpointSaver`, so multi-turn conversations survive server restarts without resending chat history.
-- **Long-term memory** — Per-user facts, preferences, and notes are stored in Lakebase via `AsyncDatabricksStore` with semantic search. Memories are retrieved automatically before each turn and injected into context.
-- **React web app** — A modern chat interface with project management, guided workflow tasks, an agent tools panel, and streaming responses.
-- **MLflow tracing** — Every agent invocation is traced end-to-end for observability, debugging, and evaluation.
+1. **One config, many agents**: A single [`config.yml`](apps/react-app/config.yml) declares your entire agent system: subagents, tools, data sources, and routing prompts. No code changes needed.
+2. **Short-term memory**: Full conversation state is checkpointed to Lakebase via `AsyncCheckpointSaver`, so multi-turn conversations survive server restarts without resending chat history.
+3. **Long-term memory**: Per-user facts, preferences, and notes are stored in Lakebase via `AsyncDatabricksStore` with semantic search. Memories are retrieved automatically before each turn and injected into context.
+4. **Web session memory**
+5. **REST API**: Invoke the MLFlow AgentServer at http://localhost:{AGENT_PORT}/invocations
+6. **React web app**: Modern chat interface with session memory, MCP/tool availability, agent tool history, and streaming responses.
+7. **MLflow tracing**: Every invocation is traced end-to-end to MLFlow traces for observability, debugging, and evaluation.
 
-## Supported Subagent Types
 
-Each top-level key in [`config.yml`](apps/react-app/config.yml) maps to a subagent type that is auto-built at startup:
+## Usage
 
-| Config Key | Subagent Type | What It Does |
-|---|---|---|
-| `genie` | **Genie Agent** | Natural-language SQL over Unity Catalog tables via [AI/BI Genie](https://docs.databricks.com/en/genie/index.html). Each entry creates a `GenieAgent` bound to a Genie Space. |
-| `retriever` | **Vector Search Retriever** | Similarity search over Databricks Vector Search indexes. Supports both text embeddings and raw vector queries (e.g., molecular fingerprints). |
-| `uc_functions` | **UC Function Agent** | Calls Python UDFs registered in Unity Catalog as tools. Group related functions under a named agent. |
-| `external_mcp` | **MCP Agent** | Connects to external [Model Context Protocol](https://modelcontextprotocol.io/) servers. Each server exposes its own set of tools that the agent can call. |
-| `lakebase` | **Memory Agent** | Save and delete long-term user memories. Retrieval is automatic — memories are injected into context before the supervisor runs. |
-
-All subagents are assembled into a single LangGraph supervisor at startup. The `prompts.supervisor` section in [`config.yml`](apps/react-app/config.yml) teaches the LLM how to route across them.
-
-## Architecture
-
+### 1. Setup
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Databricks App                                         │
-│                                                         │
-│  ┌─────────────┐    ┌────────────────────────────────┐  │
-│  │  React UI   │───▶│  FastAPI Proxy                 │  │
-│  │  (Vite)     │    │  (web_server.py)               │  │
-│  └─────────────┘    │  • project CRUD                │  │
-│                     │  • auth / SSO                  │  │
-│                     │  • chat history persistence     │  │
-│                     └────────────┬───────────────────┘  │
-│                                  │                      │
-│                     ┌────────────▼───────────────────┐  │
-│                     │  MLflow AgentServer (agent.py)  │  │
-│                     │  /invocations + /stream         │  │
-│                     └────────────┬───────────────────┘  │
-│                                  │                      │
-│                     ┌────────────▼───────────────────┐  │
-│                     │  LangGraph Supervisor           │  │
-│                     │  ┌──────┐ ┌─────────┐ ┌─────┐  │  │
-│                     │  │Genie │ │Retriever│ │ MCP │  │  │
-│                     │  └──────┘ └─────────┘ └─────┘  │  │
-│                     │  ┌──────────┐ ┌──────────────┐  │  │
-│                     │  │UC Funcs  │ │   Memory     │  │  │
-│                     │  └──────────┘ └──────┬───────┘  │  │
-│                     └──────────────────────┼─────────┘  │
-│                                            │            │
-└────────────────────────────────────────────┼────────────┘
-                                             │
-                          ┌──────────────────▼──────────────────┐
-                          │  Lakebase Autoscaling Postgres      │
-                          │  • Checkpointer (conversation state)│
-                          │  • Store (long-term user memories)  │
-                          │  • Project metadata & chat history  │
-                          └─────────────────────────────────────┘
+git clone git@github.com:yenlow/super_supervisor.git
+cd super_supervisor
+
+# Activate your virtual environment
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
 ```
 
-## Quick Start
-
-### 1. Edit [`apps/react-app/config.yml`](apps/react-app/config.yml)
+### 2. Edit [`apps/react-app/config.yml`](apps/react-app/config.yml)
 
 This is the **only file you need to change**. It defines everything: which LLM to use, which subagents to create, how they connect to data, and what the supervisor prompt says.
 
@@ -138,15 +97,50 @@ prompts:
     You are a supervisor managing N agents. Route to the right agent...
 ```
 
-The framework reads this file at startup and automatically:
-- Creates a `GenieAgent` for each entry under `genie`
-- Creates a UC function agent for each group under `uc_functions`
-- Loads MCP tools from each server under `external_mcp`
-- Creates a `VectorSearchRetrieverTool` agent for each entry under `retriever`
-- Creates a memory agent connected to Lakebase
-- Wires them all into a `langgraph-supervisor` using the `prompts.supervisor` instruction
+The framework reads this [`config.yml`](apps/react-app/config.yml) file at startup and creates subagents  loaded with either genie, retriever, UC functions, MCP servers or Lakebase memory tools and assembles them into a langgraph supervisor with the appropriate subagent and supervisor prompts.
 
-### 2. Deploy
+It assumes that the assets defined in [`config.yml`](apps/react-app/config.yml) already exists. See example notebooks on how to set up the various assets.
+
+
+### 2. Run locally
+Do local development for faster iteration of your agent app
+
+```
+cd apps/react-app
+
+# Starts both agent server and web server
+uv run start.py 
+
+# Starts only agent server
+uv run agent/start_server.py --port 8080
+
+# Starts only web server
+uv run server/web_server.py
+```
+You can set the ports using environment variables `AGENT_PORT` and `DATABRICKS_APP_PORT` respectively or in [`app.yaml`](apps/react-app/app.yaml).
+
+
+### 3. Run remotely in [Databricks Apps](https://docs.databricks.com/aws/en/dev-tools/databricks-apps/deploy#deploy-the-app)
+When you are satisfied with the local agent app, deploy it to Databricks Apps.
+
+#### Option 1: Using git
+1. Push to remote git repo.
+2. On your Databricks workspace, create a git folder based on the remote git repo (only do this once). Subsequently, you only need to push/pull updates to/from the git repo. 
+3. Create a custom Databricks App pointing to the folder `app/react-app`
+
+#### Option 2: Using Databricks CLI
+```
+cd apps/react-app
+
+# Sync from local folder to Databricks workspace
+databricks sync --watch . /Workspace/Users/my-email@org.com/my-app
+
+# Deploy app based on the Databricks folder
+databricks apps deploy my-app-name \
+   --source-code-path /Workspace/Users/my-email@org.com/my-app
+```
+
+### 4. Databricks Assets Bundle (TBD)
 
 The project uses Databricks Asset Bundles. [`databricks.yml`](databricks.yml) is generated from [`config.yml`](apps/react-app/config.yml) by [`gen_databricksyaml.py`](gen_databricksyaml.py). Deploy with:
 
@@ -156,9 +150,56 @@ The project uses Databricks Asset Bundles. [`databricks.yml`](databricks.yml) is
 
 Or use the Asset Bundle Editor in the Databricks UI — clone the repo as a Git Folder, open the bundle editor, and click **Deploy**.
 
-### 3. Run Setup Jobs
 
-After deploying, run the data setup job from the Deployments tab. This loads source data, creates Vector Search indexes, and sets up Genie Spaces.
+## Supported Subagent Types
+
+| Config Key | Subagent Type | What It Does |
+|---|---|---|
+| `genie` | **Genie Agent** | Natural-language SQL over Unity Catalog tables via [AI/BI Genie](https://docs.databricks.com/en/genie/index.html). Each entry creates a `GenieAgent` bound to a Genie Space. |
+| `retriever` | **Vector Search Retriever** | Similarity search over Databricks Vector Search indexes. Supports both text embeddings and raw vector queries (e.g., molecular fingerprints). |
+| `uc_functions` | **UC Function Agent** | Calls Python UDFs registered in Unity Catalog as tools. Group related functions under a named agent. |
+| `external_mcp` | **MCP Agent** | Connects to external [Model Context Protocol](https://modelcontextprotocol.io/) servers. Each server exposes its own set of tools that the agent can call. |
+| `lakebase` | **Memory Agent** | Save and delete long-term user memories. Retrieval is automatic — memories are injected into context before the supervisor runs. |
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Databricks App                                         │
+│                                                         │
+│  ┌─────────────┐    ┌────────────────────────────────┐  │
+│  │  React UI   │───▶│  FastAPI Proxy                 │  │
+│  │  (Vite)     │    │  (web_server.py)               │  │
+│  └─────────────┘    │  • project CRUD                │  │
+│                     │  • auth / SSO                  │  │
+│                     │  • chat history persistence     │  │
+│                     └────────────┬───────────────────┘  │
+│                                  │                      │
+│                     ┌────────────▼───────────────────┐  │
+│                     │  MLflow AgentServer (agent.py)  │  │
+│                     │  /invocations + /stream         │  │
+│                     └────────────┬───────────────────┘  │
+│                                  │                      │
+│                     ┌────────────▼───────────────────┐  │
+│                     │  LangGraph Supervisor           │  │
+│                     │  ┌──────┐ ┌─────────┐ ┌─────┐  │  │
+│                     │  │Genie │ │Retriever│ │ MCP │  │  │
+│                     │  └──────┘ └─────────┘ └─────┘  │  │
+│                     │  ┌──────────┐ ┌──────────────┐  │  │
+│                     │  │UC Funcs  │ │   Memory     │  │  │
+│                     │  └──────────┘ └──────┬───────┘  │  │
+│                     └──────────────────────┼─────────┘  │
+│                                            │            │
+└────────────────────────────────────────────┼────────────┘
+                                             │
+                          ┌──────────────────▼──────────────────┐
+                          │  Lakebase Autoscaling Postgres      │
+                          │  • Checkpointer (conversation state)│
+                          │  • Store (long-term user memories)  │
+                          │  • Project metadata & chat history  │
+                          └─────────────────────────────────────┘
+```
+
 
 ## Project Structure
 
