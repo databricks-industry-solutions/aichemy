@@ -1,0 +1,41 @@
+# Databricks Asset Bundle files
+.databricks/
+.github/
+
+data/
+apps/app/response_json.txt
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Environment files
+.env
+.env.local
+
+# Node
+node_modules/
+
+# Virtual environments
+.venv/
+venv/
+
+# SQLite databases (local dev)
+*.db

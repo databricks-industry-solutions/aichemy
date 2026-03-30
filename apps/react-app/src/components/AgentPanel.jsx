@@ -1,0 +1,195 @@
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { fetchAgentStatus, warmupAgent } from '../api/agentAPI'
+
+const MCP_INDICATORS = [
+  { key: 'opentargets', label: 'OpenTargets' },
+  { key: 'pubchem', label: 'PubChem' },
+  { key: 'pubmed', label: 'PubMed' },
+]
+
+export default function AgentPanel({
+  toolCallGroups,  // [{prompt, toolCalls: [{function_name, parameters, thinking}]}]
+  genieGroups,     // [{prompt, results: [{description, query, result}]}]
+  isLoading,
+  dbStatus,
+  mcpStatus = {},
+}) {
+  const [agentStatus, setAgentStatus] = useState({ ready: false, building: true, error: null })
+  const [warmingUp, setWarmingUp] = useState(false)
+  const pollRef = useRef(null)
+
+  const poll = useCallback(async () => {
+    const status = await fetchAgentStatus()
+    setAgentStatus(status)
+    if (status.ready) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }, [])
+
+  useEffect(() => {
+    poll()
+    pollRef.current = setInterval(poll, 5000)
+    return () => clearInterval(pollRef.current)
+  }, [poll])
+
+  const handleWarmup = async () => {
+    setWarmingUp(true)
+    await warmupAgent()
+    setTimeout(() => setWarmingUp(false), 8000)
+  }
+
+  const lightColor = agentStatus.error
+    ? 'red'
+    : agentStatus.ready
+      ? 'green'
+      : 'amber'
+
+  return (
+    <aside className="agent-column">
+      <div className="agent-header-row">
+        <h3 className="agent-title">Agent Activity</h3>
+        <div className="agent-status-indicator">
+          <span className={`traffic-light ${lightColor}`} title={
+            agentStatus.error
+              ? `Error: ${agentStatus.error}`
+              : agentStatus.ready
+                ? 'Agent ready'
+                : 'Agent launching…'
+          } />
+          <span className="agent-status-label">
+            {agentStatus.error ? 'Error' : agentStatus.ready ? 'Ready' : 'Launching agent…'}
+          </span>
+          {agentStatus.ready && (
+            <button
+              className="warmup-btn"
+              onClick={handleWarmup}
+              disabled={warmingUp}
+              title="Send a warmup query to pre-warm LLM endpoints"
+            >
+              {warmingUp ? 'Rebooting…' : 'Reboot'}
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="service-status-row agent-services">
+        <div className="db-status-badge" title={dbStatus?.db_detail || ''}>
+          <span className={`db-dot ${dbStatus ? 'connected' : 'local'}`} />
+          <span className="db-label">{dbStatus ? 'Lakebase' : '…'}</span>
+        </div>
+        {MCP_INDICATORS.map(({ key, label }) => {
+          const srv = mcpStatus[key]
+          let dotClass = 'local'
+          let tooltip = `${label}: checking…`
+          if (srv) {
+            if (!srv.ok) {
+              dotClass = 'down'
+              tooltip = `${label}: ${srv.error || 'unreachable'}`
+            } else if (srv.status === 'reachable') {
+              dotClass = 'local'
+              tooltip = `${label}: reachable (${srv.status_code} ${srv.detail || ''})`
+            } else {
+              dotClass = 'connected'
+              tooltip = `${label}: connected (${srv.status_code})`
+            }
+          }
+          return (
+            <div key={key} className="db-status-badge" title={tooltip}>
+              <span className={`db-dot ${dotClass}`} />
+              <span className="db-label">{label}</span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="agent-divider" />
+
+      <div className="agent-activity-scroll">
+        {/* Tool call groups (most recent first) */}
+        {[...toolCallGroups].reverse().map((group, gi) => (
+          <div key={`tc-${gi}`} className="activity-group">
+            <div className="activity-group-prompt">
+              Tool: <em>{group.prompt.slice(0, 80)}...</em>
+            </div>
+            {group.toolCalls.map((tc, ti) => (
+              <ToolCallExpander key={ti} index={ti + 1} toolCall={tc} />
+            ))}
+            <div className="agent-divider" />
+          </div>
+        ))}
+
+        {/* Genie SQL groups (most recent first) */}
+        {[...genieGroups].reverse().map((group, gi) => (
+          <div key={`ge-${gi}`} className="activity-group">
+            {group.results.map((g, ri) => (
+              <GenieExpander key={ri} genie={g} prompt={group.prompt} />
+            ))}
+            <div className="agent-divider" />
+          </div>
+        ))}
+
+        {/* Empty state */}
+        {toolCallGroups.length === 0 && genieGroups.length === 0 && !isLoading && (
+          <div className="status-info">🤖 Enter a query to see agent activity</div>
+        )}
+
+        {isLoading && (
+          <div className="status-info">
+            <span className="spinner" /> Thinking...
+          </div>
+        )}
+      </div>
+    </aside>
+  )
+}
+
+function ToolCallExpander({ index, toolCall }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="expander">
+      <button className="expander-header" onClick={() => setOpen(!open)}>
+        <span className="expander-title">
+          <span className="tool-badge">{index}.</span>
+          <span className="tool-icon">🔧</span>
+          <span className="tool-fn-name">{toolCall.function_name}</span>
+        </span>
+        <span className="chevron">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="expander-body">
+          {toolCall.parameters && Object.entries(toolCall.parameters).map(([k, v]) => (
+            <div key={k} className="tool-param">
+              <strong>{k}:</strong> {typeof v === 'object' && v !== null ? JSON.stringify(v, null, 2) : String(v ?? '')}
+            </div>
+          ))}
+          {toolCall.results != null && (() => {
+            const text = typeof toolCall.results === 'string' ? toolCall.results : JSON.stringify(toolCall.results, null, 2)
+            return <pre className="tool-results">{text.length > 1060 ? text.slice(0, 1060) + '...' : text}</pre>
+          })()}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function GenieExpander({ genie, prompt }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="expander">
+      <button className="expander-header" onClick={() => setOpen(!open)}>
+        <span className="expander-title">
+          <span className="tool-badge genie">SQL:</span>
+          <em>{prompt.slice(0, 80)}...</em>
+        </span>
+        <span className="chevron">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="expander-body">
+          {genie.description && <div className="tool-param">{genie.description}</div>}
+          {genie.query && <pre className="genie-sql">{genie.query}</pre>}
+        </div>
+      )}
+    </div>
+  )
+}

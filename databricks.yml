@@ -1,0 +1,90 @@
+bundle:
+  name: aichemy
+
+# ---------------------------------------------------------------------------
+# Variables — defaults drawn from apps/react-app/config.yml
+# Override per-target or at deploy time:  databricks bundle deploy -var="catalog=prod_catalog"
+# ---------------------------------------------------------------------------
+variables:
+  catalog:
+    description: "Unity Catalog name"
+    default: "aichemy2_catalog"
+
+  schema:
+    description: "Schema within the catalog"
+    default: "aichemy"
+
+  warehouse_id:
+    lookup:
+      warehouse: "Serverless Starter Warehouse"
+
+  experiment_id:
+    description: "MLflow experiment ID for tracing"
+    default: "1001868044455114"
+
+  llm_endpoint:
+    description: "LLM model serving endpoint"
+    default: "databricks-claude-opus-4-5"
+
+# ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: https://fevm-aichemy2.cloud.databricks.com/
+
+  prod:
+    mode: production
+    workspace:
+      host: https://fevm-aichemy2.cloud.databricks.com/
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+resources:
+  apps:
+    aichemy_app:
+      name: "aichemy-app-${bundle.target}"
+      description: >-
+        AI Chemistry assistant — chat with Drugbank (FDA-approved drugs),
+        search ZINC molecular database by fingerprint similarity,
+        and query PubChem / PubMed / OpenTargets via MCP.
+      source_code_path: ./apps/react-app
+  jobs:
+    data_setup:
+      name: "[${bundle.target}] AiChemy – Load data and create vector search"
+      tasks:
+        - task_key: load_drugbank
+          notebook_task:
+            notebook_path: ./notebooks/1_Load Drugbank and descriptors.py
+
+        - task_key: load_zinc
+          notebook_task:
+            notebook_path: ./notebooks/1_Load Zinc15_250K and descriptors.py
+
+        - task_key: create_vector_search
+          depends_on:
+            - task_key: load_zinc
+          notebook_task:
+            notebook_path: ./notebooks/2_create VS zinc15.ipynb
+
+        - task_key: create_drugbank_genie
+          depends_on:
+            - task_key: load_drugbank
+          notebook_task:
+            notebook_path: ./notebooks/2_create_Drugbank_genie.py
+
+        - task_key: connect_opentarget_mcp
+          notebook_task:
+            notebook_path: ./notebooks/4_connect_ext_mcp_opentarget.py
+        
+        - task_key: connect_pubchem_mcp
+          notebook_task:
+            notebook_path: ./notebooks/4_connect_ext_mcp_pubchem.py
+
+        - task_key: connect_pubmed_mcp
+          notebook_task:
+            notebook_path: ./notebooks/4_connect_ext_mcp_pubmed.py  
