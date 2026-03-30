@@ -84,7 +84,7 @@ dbClient.test_query()
 
 # Test connection to autoscaled Lakebase
 dbClient2 = LakebaseConnect(
-    user = "yen.low@databricks.com",
+    user = client_id,
     password = None, # leave None to generate ephemeral token (1h)
     project_id = cfg.get("lakebase").get("project_id"),
     branch_id = cfg.get("lakebase").get("branch_id"),
