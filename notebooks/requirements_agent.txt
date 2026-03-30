@@ -137,7 +137,7 @@ multidict==6.7.1
 mypy-extensions==0.4.3
 nbclassic==0.5.2
 nbclient==0.5.13
-nbconvert==6.5.4
+nbconvert==7.17.0
 nbformat==5.7.0
 nest-asyncio==1.5.6
 nodeenv==1.9.1
