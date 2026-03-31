@@ -1,11 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { fetchAgentStatus, warmupAgent } from '../api/agentAPI'
 
-const MCP_INDICATORS = [
-  { key: 'opentargets', label: 'OpenTargets' },
-  { key: 'pubchem', label: 'PubChem' },
-  { key: 'pubmed', label: 'PubMed' },
-]
+function mcpLabel(key) {
+  return key.charAt(0).toUpperCase() + key.slice(1)
+}
 
 export default function AgentPanel({
   toolCallGroups,  // [{prompt, toolCalls: [{function_name, parameters, thinking}]}]
@@ -77,7 +75,8 @@ export default function AgentPanel({
           <span className={`db-dot ${dbStatus ? 'connected' : 'local'}`} />
           <span className="db-label">{dbStatus ? 'Lakebase' : '…'}</span>
         </div>
-        {MCP_INDICATORS.map(({ key, label }) => {
+        {Object.keys(mcpStatus).map((key) => {
+          const label = mcpLabel(key)
           const srv = mcpStatus[key]
           let dotClass = 'local'
           let tooltip = `${label}: checking…`

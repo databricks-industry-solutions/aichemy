@@ -1,15 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { fetchTools } from '../api/agentAPI'
 
 // Tool groups with their display config (matches Streamlit app order)
-const TOOL_GROUPS = [
-  { key: 'OpenTargets', label: '🎯 OpenTargets MCP', caption: null },
-  { key: 'PubChem', label: '🧪 PubChem MCP', caption: null },
-  { key: 'Chem Utils', label: '🛠️ Chem Utilities', caption: null },
-  { key: 'PubMed', label: '📚 PubMed MCP', caption: null },
-  { key: 'DrugBank', label: '💊 DrugBank Genie', caption: 'text-to-SQL of DrugBank' },
-  { key: 'ZINC', label: '🔬 ZINC Vector Search', caption: 'similarity search' },
-]
+// const TOOL_GROUPS = [
+//   { key: 'OpenTargets', label: '🎯 OpenTargets MCP', caption: null },
+//   { key: 'PubChem', label: '🧪 PubChem MCP', caption: null },
+//   { key: 'Chem Utils', label: '🛠️ Chem Utilities', caption: null },
+//   { key: 'PubMed', label: '📚 PubMed MCP', caption: null },
+//   { key: 'DrugBank', label: '💊 DrugBank Genie', caption: 'text-to-SQL of DrugBank' },
+//   { key: 'ZINC', label: '🔬 ZINC Vector Search', caption: 'similarity search' },
+// ]
 
 export default function Sidebar({
   projects = [],
@@ -30,11 +30,35 @@ export default function Sidebar({
   const [renameValue, setRenameValue] = useState('')
   const [tools, setTools] = useState({})
   const [expandedGroup, setExpandedGroup] = useState(null)
+  const [toolSearch, setToolSearch] = useState('')
 
-  // Load tools on mount
   useEffect(() => {
     fetchTools().then(setTools).catch(() => {})
   }, [])
+
+  const filteredTools = useMemo(() => {
+    if (!toolSearch.trim()) return tools
+    const q = toolSearch.toLowerCase()
+    const result = {}
+    for (const [agent, agentTools] of Object.entries(tools)) {
+      if (agent.toLowerCase().includes(q)) {
+        result[agent] = agentTools
+        continue
+      }
+      const matched = agentTools.filter(
+        (t) =>
+          t.name.toLowerCase().includes(q) ||
+          (t.description && t.description.toLowerCase().includes(q))
+      )
+      if (matched.length > 0) result[agent] = matched
+    }
+    return result
+  }, [tools, toolSearch])
+
+  const totalToolCount = useMemo(
+    () => Object.values(tools).reduce((sum, arr) => sum + arr.length, 0),
+    [tools]
+  )
 
   const startRename = (project) => {
     setRenamingId(project.id)
@@ -155,37 +179,58 @@ export default function Sidebar({
       <div className="sidebar-divider" />
 
       {/* Available Tools */}
-      <div className="sidebar-caption">Available tools</div>
+      <div className="tools-section-header">
+        <div className="sidebar-caption" style={{ marginBottom: 0 }}>
+          Available tools
+          {totalToolCount > 0 && <span className="tool-count-badge">{totalToolCount}</span>}
+        </div>
+      </div>
+      <div className="tools-search-wrapper">
+        <input
+          className="tools-search-input"
+          type="text"
+          placeholder="Search tools…"
+          value={toolSearch}
+          onChange={(e) => setToolSearch(e.target.value)}
+        />
+        {toolSearch && (
+          <button className="tools-search-clear" onClick={() => setToolSearch('')}>×</button>
+        )}
+      </div>
       <div className="tools-list">
-        {TOOL_GROUPS.map(({ key, label, caption }) => (
-          <div key={key} className="tool-group">
+        {Object.keys(filteredTools).length === 0 && toolSearch && (
+          <div className="tools-empty">No tools match "{toolSearch}"</div>
+        )}
+        {Object.entries(filteredTools).map(([agentName, agentTools]) => (
+          <div key={agentName} className="tool-group">
             <button
-              className={`tool-group-header${expandedGroup === key ? ' expanded' : ''}`}
-              onClick={() => toggleGroup(key)}
+              className={`tool-group-header${expandedGroup === agentName ? ' expanded' : ''}`}
+              onClick={() => toggleGroup(agentName)}
             >
-              <span>{label}</span>
-              <span className="chevron">{expandedGroup === key ? '▾' : '▸'}</span>
+              <span className="tool-group-label">
+                <span className="tool-group-name">{agentName}</span>
+                <span className="tool-group-count">{agentTools.length}</span>
+              </span>
+              <span className="chevron">{expandedGroup === agentName ? '▾' : '▸'}</span>
             </button>
-            {expandedGroup === key && (
-              <>
-                {caption && <div className="tool-group-caption">{caption}</div>}
-                {tools[key] && (
-                  <div className="tool-group-items">
-                    {tools[key].map((t) => (
-                      <div key={t.name} className="tool-item">
-                        <span className="tool-item-name">{t.name}</span>
-                        {t.description && <span className="tool-item-desc">{t.description}</span>}
-                      </div>
-                    ))}
+            {expandedGroup === agentName && (
+              <div className="tool-group-items">
+                {agentTools.map((t) => (
+                  <div key={t.name} className="tool-item">
+                    <span className="tool-item-name">{t.name}</span>
+                    {t.description && <span className="tool-item-desc">{t.description}</span>}
                   </div>
-                )}
-              </>
+                ))}
+              </div>
             )}
           </div>
         ))}
       </div>
 
       <div className="sidebar-spacer" />
+      <a href="/api/tools" target="_blank" rel="noopener noreferrer" className="sidebar-tools-link">
+        View all tools
+      </a>
     </aside>
   )
 }

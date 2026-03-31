@@ -54,9 +54,12 @@ uc_functions:
     - my_catalog.my_schema.compute_metric
     - my_catalog.my_schema.forecast
 
-# --- External MCP servers ---
+# --- External MCP servers (grouped by secret scope) ---
 external_mcp:
-  my_api: https://example.com/mcp
+  mcp1:
+    url: https://example.com/mcp
+    scope: secret_scope_for_bearer_token
+    secret: secret_for_bearer_token
 
 # --- Vector Search retriever subagents ---
 retriever:
@@ -119,6 +122,8 @@ uv run server/web_server.py
 ```
 You can set the ports using environment variables `AGENT_PORT` and `DATABRICKS_APP_PORT` respectively or in [`app.yaml`](apps/react-app/app.yaml).
 
+NB: [`app.yaml`](apps/react-app/app.yaml) is a way of defining environment variables for Databricks Apps but not in your local environment. Remember to align the environment variables according to your [`config.yml`](apps/react-app/config.yml).
+
 
 ### 3. Run remotely in [Databricks Apps](https://docs.databricks.com/aws/en/dev-tools/databricks-apps/deploy#deploy-the-app)
 When you are satisfied with the local agent app, deploy it to Databricks Apps.
@@ -139,6 +144,8 @@ databricks sync --watch . /Workspace/Users/my-email@org.com/my-app
 databricks apps deploy my-app-name \
    --source-code-path /Workspace/Users/my-email@org.com/my-app
 ```
+
+Remember to grant the app SP the appropriate permissions to your underlying assets (Experiment)
 
 ### 4. Databricks Assets Bundle (TBD)
 

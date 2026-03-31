@@ -9,6 +9,7 @@ backend via AsyncDatabricksStore (LangGraph postgres store).
 The agent endpoint (POST /invocations) is served by agent/start_server.py (MLflow AgentServer).
 Port is set via AGENT_PORT (default 8080). Run separately: python agent/start_server.py --port <AGENT_PORT>
 """
+
 import os
 import re
 import json
@@ -41,6 +42,7 @@ init_mlflow()
 # ---------------------------------------------------------------------------
 # Database layer — persists project metadata to Lakebase Autoscaling Postgres.
 # ---------------------------------------------------------------------------
+
 
 class ProjectDB:
     """Project metadata persisted to Lakebase Autoscaling Postgres.
@@ -87,14 +89,14 @@ class ProjectDB:
             self._lakebase_project_id = lakebase_cfg["project_id"]
             self._lakebase_branch_id = lakebase_cfg.get("branch_id", "main")
             self._lakebase_endpoint_id = lakebase_cfg.get("endpoint_id", "primary")
-            self._lakebase_database = lakebase_cfg.get("database", "databricks_postgres")
-            self._lakebase_endpoint_name = (
-                f"projects/{self._lakebase_project_id}/branches/{self._lakebase_branch_id}/endpoints/{self._lakebase_endpoint_id}"
+            self._lakebase_database = lakebase_cfg.get(
+                "database", "databricks_postgres"
             )
+            self._lakebase_endpoint_name = f"projects/{self._lakebase_project_id}/branches/{self._lakebase_branch_id}/endpoints/{self._lakebase_endpoint_id}"
             self._host = cfg.get("host")
 
-            sp_client_id = get_secret(scope='aichemy', key='client_id')
-            sp_client_secret = get_secret(scope='aichemy', key='client_secret')
+            sp_client_id = get_secret(scope="aichemy", key="client_id")
+            sp_client_secret = get_secret(scope="aichemy", key="client_secret")
             if not (sp_client_id and sp_client_secret):
                 raise RuntimeError("SP credentials not found in secrets")
 
@@ -104,7 +106,9 @@ class ProjectDB:
                 client_secret=sp_client_secret,
             )
 
-            endpoint = self._sp_client.postgres.get_endpoint(name=self._lakebase_endpoint_name)
+            endpoint = self._sp_client.postgres.get_endpoint(
+                name=self._lakebase_endpoint_name
+            )
             self._lakebase_host = endpoint.status.hosts.host
             self._lakebase_user = sp_client_id
 
@@ -112,12 +116,17 @@ class ProjectDB:
 
             self._connect_with_retry(self._build_conninfo())
             self._ensure_schema()
-            print(f"[ProjectDB] Connected: {self._lakebase_host} / {self._lakebase_database}")
+            print(
+                f"[ProjectDB] Connected: {self._lakebase_host} / {self._lakebase_database}"
+            )
 
         except Exception:
             import traceback
+
             self._last_lakebase_error = traceback.format_exc()
-            print(f"[ProjectDB] Lakebase connection failed:\n{self._last_lakebase_error}")
+            print(
+                f"[ProjectDB] Lakebase connection failed:\n{self._last_lakebase_error}"
+            )
             raise
 
     # -- Connection helpers -------------------------------------------------
@@ -131,10 +140,13 @@ class ProjectDB:
             f"sslmode=require"
         )
 
-    def _connect_with_retry(self, conninfo: str, max_retries: int = 5, base_delay: float = 1.0):
+    def _connect_with_retry(
+        self, conninfo: str, max_retries: int = 5, base_delay: float = 1.0
+    ):
         """Retry connection for Lakebase scale-to-zero wake-up."""
         import psycopg
         import time
+
         last_error = None
         for attempt in range(max_retries):
             try:
@@ -144,14 +156,17 @@ class ProjectDB:
             except Exception as e:
                 last_error = e
                 if attempt < max_retries - 1:
-                    delay = base_delay * (2 ** attempt)
-                    print(f"[ProjectDB] Attempt {attempt + 1} failed, retrying in {delay}s... ({e})")
+                    delay = base_delay * (2**attempt)
+                    print(
+                        f"[ProjectDB] Attempt {attempt + 1} failed, retrying in {delay}s... ({e})"
+                    )
                     time.sleep(delay)
         raise last_error
 
     def _refresh_token(self):
         """Refresh the Lakebase OAuth token using the cached SP client."""
         import time
+
         cred = self._sp_client.postgres.generate_database_credential(
             endpoint=self._lakebase_endpoint_name,
         )
@@ -162,24 +177,31 @@ class ProjectDB:
     def _ensure_schema(self):
         """Create the projects table if it doesn't exist; migrate if needed."""
         import psycopg
+
         with psycopg.connect(self._build_conninfo(), connect_timeout=10) as conn:
             cur = conn.cursor()
-            cur.execute("""
+            cur.execute(
+                """
                 SELECT EXISTS (
                     SELECT 1 FROM information_schema.tables
                     WHERE table_schema = 'public' AND table_name = 'projects'
                 )
-            """)
+            """
+            )
             if cur.fetchone()[0]:
                 print("[ProjectDB] projects table already exists")
-                cur.execute("""
+                cur.execute(
+                    """
                     SELECT column_name FROM information_schema.columns
                     WHERE table_schema = 'public' AND table_name = 'projects'
-                """)
+                """
+                )
                 existing_cols = {row[0] for row in cur.fetchall()}
                 try:
                     if "messages" not in existing_cols:
-                        cur.execute("ALTER TABLE projects ADD COLUMN messages TEXT NOT NULL DEFAULT '[]'")
+                        cur.execute(
+                            "ALTER TABLE projects ADD COLUMN messages TEXT NOT NULL DEFAULT '[]'"
+                        )
                         print("[ProjectDB] Added messages column")
                     if "trace_ids" in existing_cols:
                         cur.execute("ALTER TABLE projects DROP COLUMN trace_ids")
@@ -189,7 +211,8 @@ class ProjectDB:
                     conn.rollback()
                     print(f"[ProjectDB] Schema migration skipped (not owner?): {e}")
                 return
-            cur.execute("""
+            cur.execute(
+                """
                 CREATE TABLE projects (
                     id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
@@ -199,8 +222,11 @@ class ProjectDB:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
-            """)
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id)")
+            """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id)"
+            )
             conn.commit()
 
     _TOKEN_LIFETIME = 3000  # refresh after 50 min (tokens last ~1 hour)
@@ -210,6 +236,7 @@ class ProjectDB:
         """Yield a Postgres connection, proactively refreshing the token before expiry."""
         import psycopg
         import time
+
         if time.monotonic() - self._token_issued_at > self._TOKEN_LIFETIME:
             try:
                 self._refresh_token()
@@ -221,7 +248,9 @@ class ProjectDB:
         except psycopg.OperationalError as e:
             print(f"[ProjectDB] Connection failed ({e}), refreshing token...")
             self._refresh_token()
-            self._connect_with_retry(self._build_conninfo(), max_retries=3, base_delay=0.5)
+            self._connect_with_retry(
+                self._build_conninfo(), max_retries=3, base_delay=0.5
+            )
             with psycopg.connect(self._build_conninfo(), connect_timeout=10) as conn:
                 yield conn
 
@@ -230,6 +259,7 @@ class ProjectDB:
     def list_projects(self, user_id: str) -> list[dict]:
         with self._conn() as conn:
             import psycopg.rows
+
             cur = conn.cursor(row_factory=psycopg.rows.dict_row)
             cur.execute(
                 "SELECT id, name, created_at, updated_at FROM projects "
@@ -249,14 +279,18 @@ class ProjectDB:
             )
             conn.commit()
         return {
-            "id": project_id, "name": name, "messages": [],
+            "id": project_id,
+            "name": name,
+            "messages": [],
             "agent_steps": {},
-            "created_at": now, "updated_at": now,
+            "created_at": now,
+            "updated_at": now,
         }
 
     def get_project(self, project_id: str) -> Optional[dict]:
         with self._conn() as conn:
             import psycopg.rows
+
             cur = conn.cursor(row_factory=psycopg.rows.dict_row)
             cur.execute("SELECT * FROM projects WHERE id = %s", (project_id,))
             row = cur.fetchone()
@@ -268,11 +302,16 @@ class ProjectDB:
             d["agent_steps"] = json.loads(d.get("agent_steps", "{}"))
             return d
 
-    def update_project(self, project_id: str, name: Optional[str] = None,
-                       messages: Optional[list] = None,
-                       agent_steps=None) -> Optional[dict]:
+    def update_project(
+        self,
+        project_id: str,
+        name: Optional[str] = None,
+        messages: Optional[list] = None,
+        agent_steps=None,
+    ) -> Optional[dict]:
         with self._conn() as conn:
             import psycopg.rows
+
             cur = conn.cursor(row_factory=psycopg.rows.dict_row)
             cur.execute("SELECT id FROM projects WHERE id = %s", (project_id,))
             if cur.fetchone() is None:
@@ -314,7 +353,13 @@ app = FastAPI(title="AiChemy API Proxy")
 # CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8080", "http://localhost:3000", "http://localhost:5173", "http://127.0.0.1:3000", "http://127.0.0.1:5173"],
+    allow_origins=[
+        "http://localhost:8080",
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -324,17 +369,21 @@ app.add_middleware(
 # Host is resolved from: DATABRICKS_HOST env var > config.yml > WorkspaceClient default auth
 _workspace_client = None
 
+
 def _load_config() -> dict:
     """Load config.yml — checks app root first (deployed), then notebooks/ (local dev)."""
     candidates = [
         Path(__file__).resolve().parent.parent / "config.yml",
-        Path(__file__).resolve().parent.parent.parent.parent / "notebooks" / "config.yml",
+        Path(__file__).resolve().parent.parent.parent.parent
+        / "notebooks"
+        / "config.yml",
     ]
     for cfg_path in candidates:
         if cfg_path.exists():
             with open(cfg_path) as f:
                 return yaml.safe_load(f) or {}
     return {}
+
 
 def _resolve_databricks_host() -> Optional[str]:
     """Resolve Databricks host from env var or config.yml (None lets SDK use default auth)."""
@@ -343,7 +392,9 @@ def _resolve_databricks_host() -> Optional[str]:
         return host
     return _load_config().get("host")
 
+
 DATABRICKS_HOST = _resolve_databricks_host()
+
 
 def _get_workspace_client() -> WorkspaceClient:
     global _workspace_client
@@ -357,6 +408,7 @@ def _get_workspace_client() -> WorkspaceClient:
         else:
             raise
     return _workspace_client
+
 
 # Initialize project database — runs at import time (before the async event loop
 # starts) to avoid generator/async conflicts with the synchronous SDK + psycopg calls.
@@ -416,32 +468,43 @@ async def get_user(request: Request):
     # Local dev: resolve from Databricks CLI auth
     return _resolve_local_user()
 
+
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
+
 
 class Message(BaseModel):
     role: str
     content: str
 
+
 class CustomInputs(BaseModel):
     thread_id: str
     user_id: Optional[str] = None
 
+
 class AgentRequest(BaseModel):
     input: List[Message]
     custom_inputs: CustomInputs
-    skill_name: Optional[str] = None  # When set, wraps the prompt with skill instructions
-    new_thread: Optional[bool] = None  # True = first message in thread; only then stream every item
+    skill_name: Optional[str] = (
+        None  # When set, wraps the prompt with skill instructions
+    )
+    new_thread: Optional[bool] = (
+        None  # True = first message in thread; only then stream every item
+    )
+
 
 class CreateProjectRequest(BaseModel):
     name: str
     user_id: Optional[str] = None
 
+
 class UpdateProjectRequest(BaseModel):
     name: Optional[str] = None
     messages: Optional[list] = None
     agent_steps: Union[list, dict, None] = None  # {toolCallGroups, genieGroups}
+
 
 # ---------------------------------------------------------------------------
 # Agent proxy endpoint
@@ -463,7 +526,7 @@ AGENT_REQUEST_TIMEOUT = AGENT_CONNECT_TIMEOUT + AGENT_READ_TIMEOUT
 @app.post("/api/agent/stream")
 async def call_agent_stream(request: AgentRequest):
     """Stream agent response as Server-Sent Events (SSE).
-    
+
     Each SSE event is a JSON object with a `type` field:
       - {"type": "text", "content": "..."} — a text chunk to append
       - {"type": "trace_id", "trace_id": "tr-..."} — trace id
@@ -481,10 +544,14 @@ async def call_agent_stream(request: AgentRequest):
     def stream_generator():
         try:
             # If skills are enabled, wrap the user prompt with skill instructions
-            messages = [{"role": msg.role, "content": msg.content} for msg in request.input]
+            messages = [
+                {"role": msg.role, "content": msg.content} for msg in request.input
+            ]
             if request.skill_name and messages:
                 last_msg = messages[-1]
-                enhanced = build_prompt_with_skill(last_msg["content"], request.skill_name)
+                enhanced = build_prompt_with_skill(
+                    last_msg["content"], request.skill_name
+                )
                 messages[-1] = {"role": last_msg["role"], "content": enhanced}
 
             custom_inputs = {"thread_id": request.custom_inputs.thread_id}
@@ -508,18 +575,26 @@ async def call_agent_stream(request: AgentRequest):
 
             try:
                 resp = requests.post(
-                    url=url, headers=headers, json=input_dict, timeout=AGENT_REQUEST_TIMEOUT, stream=True
+                    url=url,
+                    headers=headers,
+                    json=input_dict,
+                    timeout=AGENT_REQUEST_TIMEOUT,
+                    stream=True,
                 )
             except requests.exceptions.Timeout:
-                yield _sse({
-                    "type": "error",
-                    "content": f"Agent request timed out after {AGENT_READ_TIMEOUT}s. Try again or increase AGENT_READ_TIMEOUT.",
-                })
+                yield _sse(
+                    {
+                        "type": "error",
+                        "content": f"Agent request timed out after {AGENT_READ_TIMEOUT}s. Try again or increase AGENT_READ_TIMEOUT.",
+                    }
+                )
                 return
 
             if resp.status_code != 200:
                 body = resp.text if not resp.raw.closed else ""
-                yield _sse({"type": "error", "content": f"{resp.status_code}: {body[:500]}"})
+                yield _sse(
+                    {"type": "error", "content": f"{resp.status_code}: {body[:500]}"}
+                )
                 return
 
             yield _sse({"type": "status", "content": "Streaming response..."})
@@ -557,20 +632,30 @@ async def call_agent_stream(request: AgentRequest):
                         if is_new_thread:
                             yield from stream_new_content(item, _sse)
                 elif ev_type == "error":
-                    yield _sse({"type": "error", "content": event.get("message", str(event))})
+                    yield _sse(
+                        {"type": "error", "content": event.get("message", str(event))}
+                    )
                     return
                 elif "trace_id" in event:
                     trace_id = event["trace_id"]
 
             print(f"[stream] SSE event types received: {seen_event_types}")
-            print(f"[stream] accumulated_output items: {len(accumulated_output)}, trace_id: {trace_id}")
+            print(
+                f"[stream] accumulated_output items: {len(accumulated_output)}, trace_id: {trace_id}"
+            )
 
             # Existing thread: stream only the last message item to avoid repeating previous responses
             if not is_new_thread and accumulated_output:
                 last_msg = next(
-                    (it for it in reversed(accumulated_output)
-                     if it.get("type") == "message"
-                     and any(b.get("type") == "output_text" for b in it.get("content") or [])),
+                    (
+                        it
+                        for it in reversed(accumulated_output)
+                        if it.get("type") == "message"
+                        and any(
+                            b.get("type") == "output_text"
+                            for b in it.get("content") or []
+                        )
+                    ),
                     accumulated_output[-1],
                 )
                 yield from stream_new_content(last_msg, _sse)
@@ -583,29 +668,55 @@ async def call_agent_stream(request: AgentRequest):
             # If SSE parsing captured no output, fall back to extracting
             # the response text from the trace itself.
             if not accumulated_output and trace_id:
-                print(f"[stream] No output from SSE events, falling back to trace extraction...")
+                print(
+                    f"[stream] No output from SSE events, falling back to trace extraction..."
+                )
                 try:
                     trace = get_trace(trace_id, retries=5, delay=2.0)
                     if trace:
                         trace_dict = _serialize_trace(trace)
                         parsed = parse_trace_for_ui(trace_dict)
                         if parsed["tool_calls"]:
-                            yield _sse({"type": "tool_calls", "data": parsed["tool_calls"]})
+                            yield _sse(
+                                {"type": "tool_calls", "data": parsed["tool_calls"]}
+                            )
                         if parsed["genie_results"]:
-                            yield _sse({"type": "genie", "data": parsed["genie_results"]})
+                            yield _sse(
+                                {"type": "genie", "data": parsed["genie_results"]}
+                            )
                         # Extract the final text from the root span's outputs
                         fallback_text = _extract_text_from_trace(trace_dict)
                         if fallback_text:
                             yield _sse({"type": "text", "content": fallback_text})
                         else:
-                            yield _sse({"type": "error", "content": "Agent produced a trace but no readable output was found."})
+                            yield _sse(
+                                {
+                                    "type": "error",
+                                    "content": "Agent produced a trace but no readable output was found.",
+                                }
+                            )
                     else:
-                        yield _sse({"type": "error", "content": "Agent stream ended without producing output. Check agent logs for details."})
+                        yield _sse(
+                            {
+                                "type": "error",
+                                "content": "Agent stream ended without producing output. Check agent logs for details.",
+                            }
+                        )
                 except Exception as e:
                     print(f"[stream] Failed to parse trace {trace_id}: {e}")
-                    yield _sse({"type": "error", "content": f"Failed to extract output from trace: {e}"})
+                    yield _sse(
+                        {
+                            "type": "error",
+                            "content": f"Failed to extract output from trace: {e}",
+                        }
+                    )
             elif not accumulated_output:
-                yield _sse({"type": "error", "content": "Agent stream ended without producing output. Check agent logs for details."})
+                yield _sse(
+                    {
+                        "type": "error",
+                        "content": "Agent stream ended without producing output. Check agent logs for details.",
+                    }
+                )
             elif trace_id:
                 # Normal path: SSE parsing worked, parse trace for tool_calls/genie
                 try:
@@ -614,14 +725,20 @@ async def call_agent_stream(request: AgentRequest):
                         parsed = parse_trace_for_ui(_serialize_trace(trace))
                         print(f"parsed: {parsed}")
                         if parsed["tool_calls"]:
-                            yield _sse({"type": "tool_calls", "data": parsed["tool_calls"]})
+                            yield _sse(
+                                {"type": "tool_calls", "data": parsed["tool_calls"]}
+                            )
                         if parsed["genie_results"]:
-                            yield _sse({"type": "genie", "data": parsed["genie_results"]})
+                            yield _sse(
+                                {"type": "genie", "data": parsed["genie_results"]}
+                            )
                 except Exception as e:
                     print(f"[stream] Failed to parse trace {trace_id}: {e}")
 
         except requests.exceptions.ConnectionError as e:
-            yield _sse({"type": "error", "content": f"Lost connection to agent server: {e}"})
+            yield _sse(
+                {"type": "error", "content": f"Lost connection to agent server: {e}"}
+            )
         except Exception as e:
             yield _sse({"type": "error", "content": f"{type(e).__name__}: {e}"})
 
@@ -633,6 +750,7 @@ async def call_agent_stream(request: AgentRequest):
 # ---------------------------------------------------------------------------
 # MLflow Trace endpoint
 # ---------------------------------------------------------------------------
+
 
 def _safe_json(obj):
     """Convert an object to a JSON-safe value. Falls back to str() for unpicklable objects."""
@@ -652,24 +770,26 @@ def _serialize_trace(trace) -> dict:
     """Convert an MLflow Trace object to a JSON-serializable dict."""
     info = trace.info
     spans = []
-    for s in (trace.data.spans if trace.data else []):
+    for s in trace.data.spans if trace.data else []:
         attrs = {}
         try:
             for k, v in (s.attributes or {}).items():
                 attrs[str(k)] = _safe_json(v)
         except Exception:
             pass
-        spans.append({
-            "name": getattr(s, "name", None),
-            "span_id": getattr(s, "span_id", None),
-            "parent_id": getattr(s, "parent_id", None),
-            "status": str(getattr(s, "status", "")),
-            "start_time_ns": getattr(s, "start_time_ns", None),
-            "end_time_ns": getattr(s, "end_time_ns", None),
-            "inputs": _safe_json(getattr(s, "inputs", None)),
-            "outputs": _safe_json(getattr(s, "outputs", None)),
-            "attributes": attrs,
-        })
+        spans.append(
+            {
+                "name": getattr(s, "name", None),
+                "span_id": getattr(s, "span_id", None),
+                "parent_id": getattr(s, "parent_id", None),
+                "status": str(getattr(s, "status", "")),
+                "start_time_ns": getattr(s, "start_time_ns", None),
+                "end_time_ns": getattr(s, "end_time_ns", None),
+                "inputs": _safe_json(getattr(s, "inputs", None)),
+                "outputs": _safe_json(getattr(s, "outputs", None)),
+                "attributes": attrs,
+            }
+        )
     return {
         "trace_id": getattr(info, "trace_id", None),
         "status": str(getattr(info, "state", "")),
@@ -685,12 +805,15 @@ async def api_get_trace(trace_id: str):
     """Fetch an MLflow trace by ID (with retries for async write delay)."""
     import asyncio
     import functools
+
     loop = asyncio.get_running_loop()
     trace = await loop.run_in_executor(
         None, functools.partial(get_trace, trace_id, retries=5, delay=2)
     )
     if trace is None:
-        raise HTTPException(status_code=404, detail=f"Trace '{trace_id}' not found after retries")
+        raise HTTPException(
+            status_code=404, detail=f"Trace '{trace_id}' not found after retries"
+        )
     return _serialize_trace(trace)
 
 
@@ -698,17 +821,20 @@ async def api_get_trace(trace_id: str):
 # Project CRUD endpoints
 # ---------------------------------------------------------------------------
 
+
 @app.get("/api/projects")
 async def list_projects(user_id: str = Query(default=None)):
     """List all projects for a user, ordered by most recently updated."""
     uid = user_id or _resolve_local_user()["user_id"]
     return db.list_projects(uid)
 
+
 @app.post("/api/projects")
 async def create_project(req: CreateProjectRequest):
     """Create a new project. Returns the full project object."""
     uid = req.user_id or _resolve_local_user()["user_id"]
     return db.create_project(uid, req.name)
+
 
 @app.get("/api/projects/{project_id}")
 async def get_project(project_id: str):
@@ -717,6 +843,7 @@ async def get_project(project_id: str):
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
+
 
 @app.put("/api/projects/{project_id}")
 async def update_project(project_id: str, req: UpdateProjectRequest):
@@ -731,6 +858,7 @@ async def update_project(project_id: str, req: UpdateProjectRequest):
         raise HTTPException(status_code=404, detail="Project not found")
     return project
 
+
 @app.delete("/api/projects/{project_id}")
 async def delete_project(project_id: str):
     """Delete a project."""
@@ -739,22 +867,28 @@ async def delete_project(project_id: str):
         raise HTTPException(status_code=404, detail="Project not found")
     return {"ok": True}
 
+
 # ---------------------------------------------------------------------------
 # Response parsing helpers (mirrors Streamlit utils.py)
 # ---------------------------------------------------------------------------
 def strip_tool_call_tags(text_content: str) -> str:
     """Strip <function_calls>, <thinking>, and <results> tags from text."""
-    text_content = re.sub(r'<function_calls>.*?</function_calls>', '', text_content, flags=re.DOTALL)
-    text_content = re.sub(r'<thinking>.*?</thinking>', '', text_content, flags=re.DOTALL)
-    text_content = re.sub(r'<results>.*?</results>', '', text_content, flags=re.DOTALL)
-    text_content = re.sub(r'<results>.*', '', text_content, flags=re.DOTALL)
-    text_content = re.sub(r'\n\s*\n\s*\n+', '\n\n', text_content)
+    text_content = re.sub(
+        r"<function_calls>.*?</function_calls>", "", text_content, flags=re.DOTALL
+    )
+    text_content = re.sub(
+        r"<thinking>.*?</thinking>", "", text_content, flags=re.DOTALL
+    )
+    text_content = re.sub(r"<results>.*?</results>", "", text_content, flags=re.DOTALL)
+    text_content = re.sub(r"<results>.*", "", text_content, flags=re.DOTALL)
+    text_content = re.sub(r"\n\s*\n\s*\n+", "\n\n", text_content)
     return text_content.strip()
 
 
 def stream_new_content(item: Optional[dict], _sse):
     """Yield SSE events for one response item's text in chunks. Skips tool-call tags."""
     import time
+
     if not item:
         return
     for block in item.get("content") or []:
@@ -782,11 +916,13 @@ def parse_genie_results(trace_dict: dict) -> list[dict]:
             continue
         outputs = span.get("outputs")
         if isinstance(outputs, dict) and outputs.get("result"):
-            results.append({
-                "result": outputs.get("result", ""),
-                "query": outputs.get("query", ""),
-                "description": outputs.get("description", ""),
-            })
+            results.append(
+                {
+                    "result": outputs.get("result", ""),
+                    "query": outputs.get("query", ""),
+                    "description": outputs.get("description", ""),
+                }
+            )
     return results
 
 
@@ -830,14 +966,16 @@ def extract_all_tool_calls(trace_dict: dict) -> list[dict]:
                     results = span.get("outputs").get("messages")[0].get("content")
                 except Exception:
                     results = None
-                if tool_call.get("args", {})=={} and results is None:
+                if tool_call.get("args", {}) == {} and results is None:
                     continue
                 else:
-                    all_tool_calls.append({
-                        "function_name": tc_name,
-                        "parameters": tool_call.get("args"),
-                        "results": results
-                    })
+                    all_tool_calls.append(
+                        {
+                            "function_name": tc_name,
+                            "parameters": tool_call.get("args"),
+                            "results": results,
+                        }
+                    )
     return all_tool_calls
 
 
@@ -895,7 +1033,11 @@ def _extract_text_from_trace(trace_dict: dict) -> Optional[str]:
             for item in outputs.get("output", []):
                 if isinstance(item, dict) and item.get("type") == "message":
                     for block in item.get("content") or []:
-                        if isinstance(block, dict) and block.get("type") == "output_text" and block.get("text"):
+                        if (
+                            isinstance(block, dict)
+                            and block.get("type") == "output_text"
+                            and block.get("text")
+                        ):
                             text = strip_tool_call_tags(block["text"])
                             if text:
                                 return text
@@ -919,6 +1061,7 @@ def _extract_text_from_trace(trace_dict: dict) -> Optional[str]:
 # Tools endpoint — introspected from the live agent
 # ---------------------------------------------------------------------------
 
+
 @app.get("/api/tools")
 async def get_tools():
     """Return available tools grouped by agent, proxied from the agent server."""
@@ -932,6 +1075,7 @@ async def get_tools():
     except Exception:
         pass
     return {}
+
 
 # ---------------------------------------------------------------------------
 # Skills – discover, load, and build prompts with skill instructions
@@ -1009,7 +1153,9 @@ def discover_skills(skills_dir: Optional[Union[str, Path]] = None) -> dict:
     return skills
 
 
-def load_skill_content(skill_name: str, skills_dir: Optional[Union[str, Path]] = None) -> Optional[dict]:
+def load_skill_content(
+    skill_name: str, skills_dir: Optional[Union[str, Path]] = None
+) -> Optional[dict]:
     """Load full SKILL.md + reference files for a given skill."""
     skills_dir = Path(skills_dir) if skills_dir else _SKILLS_DIR
     skill_path = skills_dir / skill_name
@@ -1039,12 +1185,19 @@ def load_skill_content(skill_name: str, skills_dir: Optional[Union[str, Path]] =
             for ref_name, ref_content in references.items():
                 full_prompt += f"### {ref_name}\n\n{ref_content}\n\n"
 
-        return {"frontmatter": fm, "content": body, "references": references, "full_prompt": full_prompt}
+        return {
+            "frontmatter": fm,
+            "content": body,
+            "references": references,
+            "full_prompt": full_prompt,
+        }
     except Exception:
         return None
 
 
-def build_prompt_with_skill(user_query: str, skill_name: str, skills_dir: Optional[Union[str, Path]] = None) -> str:
+def build_prompt_with_skill(
+    user_query: str, skill_name: str, skills_dir: Optional[Union[str, Path]] = None
+) -> str:
     """Wrap a user query with skill instructions if the skill exists."""
     skill_data = load_skill_content(skill_name, skills_dir)
     if not skill_data:
@@ -1090,6 +1243,7 @@ async def get_skills():
 # Health check
 # ---------------------------------------------------------------------------
 
+
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint — includes MCP server reachability."""
@@ -1118,12 +1272,20 @@ async def health_check():
 
 _MCP_SERVERS = None
 
+
 def _get_mcp_servers() -> dict[str, str]:
-    """Load external MCP server URLs from config.yml (cached)."""
+    """Load external MCP server URLs from config.yml (cached).
+
+    Flattens the hierarchical ``external_mcp`` schema (scope -> name -> details)
+    into a flat ``{name: url}`` dict for health-check iteration.
+    """
     global _MCP_SERVERS
     if _MCP_SERVERS is None:
         cfg = _load_config()
-        _MCP_SERVERS = cfg.get("external_mcp", {}) if cfg else {}
+        flat: dict[str, str] = {}
+        for name, mcp_cfg in (cfg.get("external_mcp", {})).items():
+            flat[name] = mcp_cfg["url"]
+        _MCP_SERVERS = flat
     return _MCP_SERVERS
 
 
@@ -1136,6 +1298,8 @@ def _check_mcp_server(name: str, url: str, timeout: float = 5.0) -> dict:
                                      request (e.g. 406, 4xx, 5xx)
       ok=False — connection refused, timeout, or other transport error
     """
+    cfg = _load_config()
+
     mcp_init = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -1146,16 +1310,35 @@ def _check_mcp_server(name: str, url: str, timeout: float = 5.0) -> dict:
             "clientInfo": {"name": "health-check", "version": "0.1.0"},
         },
     }
-    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
-    if "glama.ai" in url:
-        headers["Authorization"] = f"Bearer {get_secret(scope='aichemy', key=f'{name}_glama_api')}"
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+
+    # Append bearer token to headers if secret is provided
+    secret = cfg["external_mcp"].get(name, {}).get("secret")
+    if secret:
+        headers["Authorization"] = (
+            f"Bearer {get_secret(scope=cfg["external_mcp"].get(name, {}).get("scope"), 
+        key=secret)}"
+        )
+
     try:
         resp = requests.post(url, json=mcp_init, headers=headers, timeout=timeout)
         if resp.status_code < 400:
-            return {"name": name, "url": url, "ok": True, "status_code": resp.status_code}
+            return {
+                "name": name,
+                "url": url,
+                "ok": True,
+                "status_code": resp.status_code,
+            }
         return {
-            "name": name, "url": url, "ok": True, "status": "reachable",
-            "status_code": resp.status_code, "detail": resp.reason,
+            "name": name,
+            "url": url,
+            "ok": True,
+            "status": "reachable",
+            "status_code": resp.status_code,
+            "detail": resp.reason,
         }
     except requests.exceptions.ConnectionError:
         return {"name": name, "url": url, "ok": False, "error": "connection_refused"}
@@ -1193,6 +1376,7 @@ async def mcp_status():
 # Agent status + warmup — proxied from the AgentServer
 # ---------------------------------------------------------------------------
 
+
 @app.get("/api/agent/status")
 async def agent_status():
     """Proxy agent readiness check to the AgentServer."""
@@ -1219,19 +1403,22 @@ async def agent_warmup():
         return {"ok": False, "detail": str(e)}
 
 
-
 # ---------------------------------------------------------------------------
 # Lakebase diagnostic endpoint — step-by-step connection test
 # ---------------------------------------------------------------------------
+
 
 @app.get("/api/debug/lakebase")
 async def debug_lakebase(request: Request):
     """Run each Lakebase connection step individually and report where it fails."""
     import databricks.sdk
-    steps = {"0_env": {
-        "sdk_version": getattr(databricks.sdk, "__version__", "unknown"),
-        "startup_error": db._last_lakebase_error,
-    }}
+
+    steps = {
+        "0_env": {
+            "sdk_version": getattr(databricks.sdk, "__version__", "unknown"),
+            "startup_error": db._last_lakebase_error,
+        }
+    }
 
     # Step 1: config.yml
     try:
@@ -1250,8 +1437,8 @@ async def debug_lakebase(request: Request):
 
     # Step 2: SP credentials
     try:
-        sp_client_id = get_secret(scope='aichemy', key='client_id')
-        sp_client_secret = get_secret(scope='aichemy', key='client_secret')
+        sp_client_id = get_secret(scope="aichemy", key="client_id")
+        sp_client_secret = get_secret(scope="aichemy", key="client_secret")
         steps["2_sp_credentials"] = {
             "ok": bool(sp_client_id and sp_client_secret),
             "client_id_prefix": sp_client_id[:8] + "..." if sp_client_id else None,
@@ -1282,15 +1469,26 @@ async def debug_lakebase(request: Request):
         )
         endpoint = sp_client.postgres.get_endpoint(name=endpoint_name)
         pg_host = endpoint.status.hosts.host
-        steps["4_endpoint"] = {"ok": True, "pg_host": pg_host, "endpoint_name": endpoint_name}
+        steps["4_endpoint"] = {
+            "ok": True,
+            "pg_host": pg_host,
+            "endpoint_name": endpoint_name,
+        }
     except Exception as e:
-        steps["4_endpoint"] = {"ok": False, "error": str(e), "endpoint_name": endpoint_name}
+        steps["4_endpoint"] = {
+            "ok": False,
+            "error": str(e),
+            "endpoint_name": endpoint_name,
+        }
         return {"steps": steps, "result": "FAILED at step 4"}
 
     # Step 5: Generate OAuth token
     try:
         cred = sp_client.postgres.generate_database_credential(endpoint=endpoint_name)
-        steps["5_token"] = {"ok": True, "token_length": len(cred.token) if cred.token else 0}
+        steps["5_token"] = {
+            "ok": True,
+            "token_length": len(cred.token) if cred.token else 0,
+        }
     except Exception as e:
         steps["5_token"] = {"ok": False, "error": str(e)}
         return {"steps": steps, "result": "FAILED at step 5"}
@@ -1298,6 +1496,7 @@ async def debug_lakebase(request: Request):
     # Step 6: Postgres connection test
     try:
         import psycopg
+
         database = lakebase_cfg.get("database", "databricks_postgres")
         conninfo = (
             f"dbname={database} "
@@ -1315,6 +1514,7 @@ async def debug_lakebase(request: Request):
 
     return {"steps": steps, "result": "ALL STEPS PASSED"}
 
+
 # ---------------------------------------------------------------------------
 # Static file serving — serves the built React frontend (dist/)
 # Must be mounted LAST so /api routes take priority.
@@ -1323,7 +1523,9 @@ async def debug_lakebase(request: Request):
 _dist_dir = _app_root / "dist"
 
 if _dist_dir.exists():
-    app.mount("/assets", StaticFiles(directory=_dist_dir / "assets"), name="static-assets")
+    app.mount(
+        "/assets", StaticFiles(directory=_dist_dir / "assets"), name="static-assets"
+    )
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
@@ -1332,6 +1534,7 @@ if _dist_dir.exists():
         if full_path and file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
         return FileResponse(_dist_dir / "index.html")
+
 else:
     # No dist/ — e.g. backend-only or frontend not built yet. Avoid 404 on /
     @app.get("/")
@@ -1344,7 +1547,9 @@ else:
             "<li><a href='/api/projects'>/api/projects</a></li></ul></body></html>"
         )
 
+
 if __name__ == "__main__":
     import uvicorn
+
     port = int(os.getenv("DATABRICKS_APP_PORT", "8010"))
     uvicorn.run(app, host="0.0.0.0", port=port)
