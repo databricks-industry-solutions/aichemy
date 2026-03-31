@@ -14,7 +14,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _load_config(file=None):
+def load_config(file=None):
     """Load config.yml from app root (parent of agent/)."""
     if file:
         with open(file) as f:
@@ -53,7 +53,7 @@ def init_mlflow():
     print(f"Setting MLflow experiment to {experiment_id}")
 
     if experiment_id is None:
-        cfg = _load_config()
+        cfg = load_config()
         experiment_id = (cfg or {}).get("experiment_id")
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_registry_uri(registry_uri)
@@ -66,18 +66,23 @@ def get_secret(scope: str, key: str) -> str:
     return b64decode(secret_base64).decode("utf-8")
 
 
-def init_workspace_client(cfg):
-    # SP login takes precedence over PAT/profile login (for Lakebase writes)
+def get_secret_from_cfg(cfg) -> tuple[str | None, str | None]:
+    """Extract SP client_id and client_secret from a config dict via Databricks secrets."""
     sp_creds = cfg.get("service_principal", {})
     print(f"Service Principal credentials: {sp_creds}")
-    client_id = None
-    client_secret = None
-    if sp_creds:
-        scope_name = next(iter(sp_creds))
-        scope_cfg = sp_creds[scope_name]
-        client_id = get_secret(scope=scope_name, key=scope_cfg["client_id"])
-        client_secret = get_secret(scope=scope_name, key=scope_cfg["client_secret"])
-        print(f"Service Principal credentials found for {scope_name}: {client_id}")
+    if not sp_creds:
+        return None, None
+    scope_name = next(iter(sp_creds))
+    scope_cfg = sp_creds[scope_name]
+    client_id = get_secret(scope=scope_name, key=scope_cfg["client_id"])
+    client_secret = get_secret(scope=scope_name, key=scope_cfg["client_secret"])
+    print(f"Service Principal credentials found for {scope_name}: {client_id}")
+    return client_id, client_secret
+
+
+def init_workspace_client(cfg):
+    # SP login takes precedence over PAT/profile login (for Lakebase writes)
+    client_id, client_secret = get_secret_from_cfg(cfg)
     if client_id and client_secret:
         try:
             ws_client = WorkspaceClient(

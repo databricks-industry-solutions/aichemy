@@ -145,11 +145,11 @@ export async function fetchTools() {
 
 /**
  * Fetch discovered skills metadata from the backend.
- * @returns {Promise<{skills: Object, labels: string[], captions: string[]}>}
+ * @returns {Promise<Object>} Map of skill name -> {description, path, label, caption}
  */
 export async function fetchSkills() {
   const response = await fetch(`${API_BASE_URL}/api/skills`)
-  if (!response.ok) return { skills: {}, labels: [], captions: [] }
+  if (!response.ok) return {}
   return response.json()
 }
 

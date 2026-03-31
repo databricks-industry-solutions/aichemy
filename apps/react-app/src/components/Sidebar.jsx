@@ -1,15 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { fetchTools } from '../api/agentAPI'
-
-// Tool groups with their display config (matches Streamlit app order)
-// const TOOL_GROUPS = [
-//   { key: 'OpenTargets', label: '🎯 OpenTargets MCP', caption: null },
-//   { key: 'PubChem', label: '🧪 PubChem MCP', caption: null },
-//   { key: 'Chem Utils', label: '🛠️ Chem Utilities', caption: null },
-//   { key: 'PubMed', label: '📚 PubMed MCP', caption: null },
-//   { key: 'DrugBank', label: '💊 DrugBank Genie', caption: 'text-to-SQL of DrugBank' },
-//   { key: 'ZINC', label: '🔬 ZINC Vector Search', caption: 'similarity search' },
-// ]
+import { fetchTools, fetchSkills } from '../api/agentAPI'
 
 export default function Sidebar({
   projects = [],
@@ -18,12 +8,8 @@ export default function Sidebar({
   onNewProject,
   onRenameProject,
   onDeleteProject,
-  workflows,
-  workflowCaptions,
   selectedWorkflow,
   onSelectWorkflow,
-  skillsEnabled,
-  onToggleSkills,
   userInfo,
 }) {
   const [renamingId, setRenamingId] = useState(null)
@@ -31,9 +17,12 @@ export default function Sidebar({
   const [tools, setTools] = useState({})
   const [expandedGroup, setExpandedGroup] = useState(null)
   const [toolSearch, setToolSearch] = useState('')
+  const [skills, setSkills] = useState({})
+  const [skillSearch, setSkillSearch] = useState('')
 
   useEffect(() => {
     fetchTools().then(setTools).catch(() => {})
+    fetchSkills().then(setSkills).catch(() => {})
   }, [])
 
   const filteredTools = useMemo(() => {
@@ -59,6 +48,20 @@ export default function Sidebar({
     () => Object.values(tools).reduce((sum, arr) => sum + arr.length, 0),
     [tools]
   )
+
+  const filteredSkillEntries = useMemo(() => {
+    const entries = Object.entries(skills)
+    if (!skillSearch.trim()) return entries
+    const q = skillSearch.toLowerCase()
+    return entries.filter(
+      ([name, meta]) =>
+        name.toLowerCase().includes(q) ||
+        meta.label?.toLowerCase().includes(q) ||
+        meta.description?.toLowerCase().includes(q)
+    )
+  }, [skills, skillSearch])
+
+  const totalSkillCount = useMemo(() => Object.keys(skills).length, [skills])
 
   const startRename = (project) => {
     setRenamingId(project.id)
@@ -147,34 +150,46 @@ export default function Sidebar({
 
       <div className="sidebar-divider" />
 
-      {/* Guided Workflows header with Skills checkbox */}
-      <div className="guided-header">
-        <div className="sidebar-caption" style={{ marginBottom: 0 }}>Guided workflows</div>
-        <label className="skills-toggle">
-          <input
-            type="checkbox"
-            checked={skillsEnabled}
-            onChange={(e) => onToggleSkills(e.target.checked)}
-          />
-          <span className="skills-label">Skills</span>
-          <span className="skills-help-icon" data-tooltip="Enable Skills (SLOW!) for detailed and consistent outputs">?</span>
-        </label>
+      {/* Available Skills */}
+      <div className="tools-section-header">
+        <div className="sidebar-caption" style={{ marginBottom: 0 }}>
+          Available skills
+          {totalSkillCount > 0 && <span className="tool-count-badge">{totalSkillCount}</span>}
+        </div>
       </div>
-      <div className="workflow-radio-group">
-        {workflows.map((wf, idx) => (
+      <div className="tools-search-wrapper">
+        <input
+          className="tools-search-input"
+          type="text"
+          placeholder="Search skills…"
+          value={skillSearch}
+          onChange={(e) => setSkillSearch(e.target.value)}
+        />
+        {skillSearch && (
+          <button className="tools-search-clear" onClick={() => setSkillSearch('')}>×</button>
+        )}
+      </div>
+      <div className="skills-list">
+        {filteredSkillEntries.length === 0 && skillSearch && (
+          <div className="tools-empty">No skills match &ldquo;{skillSearch}&rdquo;</div>
+        )}
+        {filteredSkillEntries.map(([name, meta]) => (
           <label
-            key={wf}
-            className={`workflow-radio-item${selectedWorkflow === wf ? ' selected' : ''}`}
-            onClick={() => onSelectWorkflow(selectedWorkflow === wf ? null : wf)}
+            key={name}
+            className={`skill-item${selectedWorkflow === name ? ' selected' : ''}`}
+            onClick={() => onSelectWorkflow(selectedWorkflow === name ? null : name)}
           >
-            <span className={`radio-dot${selectedWorkflow === wf ? ' active' : ''}`} />
-            <span className="workflow-radio-content">
-              <span className="workflow-radio-label">{wf}</span>
-              <span className="workflow-radio-caption">{workflowCaptions[idx]}</span>
+            <span className={`radio-dot${selectedWorkflow === name ? ' active' : ''}`} />
+            <span className="skill-item-content">
+              <span className="skill-item-label">{meta.label}</span>
+              {meta.caption && <span className="skill-item-caption">{meta.caption}</span>}
             </span>
           </label>
         ))}
       </div>
+      <a href="/api/skills" target="_blank" rel="noopener noreferrer" className="sidebar-view-link">
+        View all skills
+      </a>
 
       <div className="sidebar-divider" />
 
@@ -228,7 +243,7 @@ export default function Sidebar({
       </div>
 
       <div className="sidebar-spacer" />
-      <a href="/api/tools" target="_blank" rel="noopener noreferrer" className="sidebar-tools-link">
+      <a href="/api/tools" target="_blank" rel="noopener noreferrer" className="sidebar-view-link">
         View all tools
       </a>
     </aside>
