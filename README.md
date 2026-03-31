@@ -33,9 +33,10 @@ uv pip install -r requirements.txt
 
 ### 2. Make your edits 
 
-A. Change [`logo.svg`](apps/react-app/public/logo.svg) to your app logo. <br>
-B. Add custom skills to the [`skills`](apps/react-app/skills) folder. <br>
-C. Edit [`config.yml`](apps/react-app/config.yml). Define which LLM to use, which subagents to create, how they connect to data, and what the supervisor prompt says.
+A. [OPTIONAL] Change [`logo.svg`](apps/react-app/public/logo.svg) to your app logo. <br>
+B. [OPTIONAL] Add custom skills to the [`skills`](apps/react-app/skills) folder. <br>
+C. Align [`app.yaml`](apps/react-app/app.yaml) with [`config.yml`](apps/react-app/config.yml), particularly `MLFLOW_EXPERIMENT_ID`.
+D. Edit [`config.yml`](apps/react-app/config.yml). Define which LLM to use, which subagents to create, how they connect to data, and what the supervisor prompt says.
 
 ```yaml
 # --- Workspace & model ---
