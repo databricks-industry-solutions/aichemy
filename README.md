@@ -6,6 +6,8 @@
 
 *Super Supervisor* is a declarative framework for building **memory-powered multi-agent supervisors** on Databricks. Define your subagents, tools, and prompts in a single [`config.yml`](apps/react-app/config.yml). Super Supervisor automatically assembles the LangGraph supervisor, connects to Lakebase Autoscaling Postgres for short-/long-term memory, and serves everything as a Databricks App with a React UI.
 
+![screenshot](img/ssupervisor_screenshot.png)
+
 ## What It Does
 
 1. **One config, many agents**: A single [`config.yml`](apps/react-app/config.yml) declares your entire agent system: subagents, tools, data sources, and routing prompts. No code changes needed.
