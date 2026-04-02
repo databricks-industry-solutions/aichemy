@@ -158,6 +158,35 @@ body {
   border-radius: 4px; font-size: 14px; font-family: inherit; outline: none; min-width: 0;
 }
 
+/* Skills toggle checkbox */
+.skills-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+.skills-toggle input[type="checkbox"] {
+  accent-color: var(--primary-color);
+  cursor: pointer;
+}
+.skills-tooltip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--border-color);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: help;
+  line-height: 1;
+}
+
 /* Skills list */
 .skills-list {
   display: flex;

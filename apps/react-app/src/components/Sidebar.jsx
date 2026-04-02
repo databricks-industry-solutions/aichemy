@@ -1,6 +1,13 @@
 import { useState, useEffect, useMemo } from 'react'
 import { fetchTools, fetchSkills } from '../api/agentAPI'
 
+const TOOL_GROUPS = [
+  { key: 'OpenTargets', label: '🎯 OpenTargets MCP', caption: null },
+  { key: 'PubChem', label: '🧪 PubChem MCP', caption: null },
+  { key: 'Chem Utils', label: '🛠️ Chem Utilities', caption: null },
+  { key: 'PubMed', label: '📚 PubMed MCP', caption: null },
+]
+
 export default function Sidebar({
   projects = [],
   currentProjectId,
@@ -10,58 +17,33 @@ export default function Sidebar({
   onDeleteProject,
   selectedWorkflow,
   onSelectWorkflow,
+  skillsEnabled,
+  onToggleSkills,
   userInfo,
 }) {
   const [renamingId, setRenamingId] = useState(null)
   const [renameValue, setRenameValue] = useState('')
   const [tools, setTools] = useState({})
   const [expandedGroup, setExpandedGroup] = useState(null)
-  const [toolSearch, setToolSearch] = useState('')
   const [skills, setSkills] = useState({})
-  const [skillSearch, setSkillSearch] = useState('')
 
   useEffect(() => {
     fetchTools().then(setTools).catch(() => {})
     fetchSkills().then(setSkills).catch(() => {})
   }, [])
 
-  const filteredTools = useMemo(() => {
-    if (!toolSearch.trim()) return tools
-    const q = toolSearch.toLowerCase()
-    const result = {}
-    for (const [agent, agentTools] of Object.entries(tools)) {
-      if (agent.toLowerCase().includes(q)) {
-        result[agent] = agentTools
-        continue
-      }
-      const matched = agentTools.filter(
-        (t) =>
-          t.name.toLowerCase().includes(q) ||
-          (t.description && t.description.toLowerCase().includes(q))
-      )
-      if (matched.length > 0) result[agent] = matched
-    }
-    return result
-  }, [tools, toolSearch])
+  const SKILL_RANK = {
+    'target-identification': 0,
+    'hit-identification': 1,
+    'ADME-assessment': 2,
+    'safety-assessment': 3,
+  }
 
-  const totalToolCount = useMemo(
-    () => Object.values(tools).reduce((sum, arr) => sum + arr.length, 0),
-    [tools]
-  )
-
-  const filteredSkillEntries = useMemo(() => {
-    const entries = Object.entries(skills)
-    if (!skillSearch.trim()) return entries
-    const q = skillSearch.toLowerCase()
-    return entries.filter(
-      ([name, meta]) =>
-        name.toLowerCase().includes(q) ||
-        meta.label?.toLowerCase().includes(q) ||
-        meta.description?.toLowerCase().includes(q)
+  const sortedSkillEntries = useMemo(() => {
+    return Object.entries(skills).sort(
+      ([a], [b]) => (SKILL_RANK[a] ?? Infinity) - (SKILL_RANK[b] ?? Infinity)
     )
-  }, [skills, skillSearch])
-
-  const totalSkillCount = useMemo(() => Object.keys(skills).length, [skills])
+  }, [skills])
 
   const startRename = (project) => {
     setRenamingId(project.id)
@@ -150,30 +132,21 @@ export default function Sidebar({
 
       <div className="sidebar-divider" />
 
-      {/* Available Skills */}
+      {/* Guided Workflows header with Skills checkbox */}
       <div className="tools-section-header">
-        <div className="sidebar-caption" style={{ marginBottom: 0 }}>
-          Available skills
-          {totalSkillCount > 0 && <span className="tool-count-badge">{totalSkillCount}</span>}
-        </div>
-      </div>
-      <div className="tools-search-wrapper">
-        <input
-          className="tools-search-input"
-          type="text"
-          placeholder="Search skills…"
-          value={skillSearch}
-          onChange={(e) => setSkillSearch(e.target.value)}
-        />
-        {skillSearch && (
-          <button className="tools-search-clear" onClick={() => setSkillSearch('')}>×</button>
-        )}
+        <div className="sidebar-caption" style={{ marginBottom: 0 }}>Guided workflows</div>
+        <label className="skills-toggle">
+          <input
+            type="checkbox"
+            checked={skillsEnabled}
+            onChange={(e) => onToggleSkills(e.target.checked)}
+          />
+          Skills
+          <span className="skills-tooltip" title="When enabled, each workflow uses a structured skill prompt for richer, more guided results">?</span>
+        </label>
       </div>
       <div className="skills-list">
-        {filteredSkillEntries.length === 0 && skillSearch && (
-          <div className="tools-empty">No skills match &ldquo;{skillSearch}&rdquo;</div>
-        )}
-        {filteredSkillEntries.map(([name, meta]) => (
+        {sortedSkillEntries.map(([name, meta]) => (
           <label
             key={name}
             className={`skill-item${selectedWorkflow === name ? ' selected' : ''}`}
@@ -187,65 +160,40 @@ export default function Sidebar({
           </label>
         ))}
       </div>
-      <a href="/api/skills" target="_blank" rel="noopener noreferrer" className="sidebar-view-link">
-        View all skills
-      </a>
-
       <div className="sidebar-divider" />
 
       {/* Available Tools */}
-      <div className="tools-section-header">
-        <div className="sidebar-caption" style={{ marginBottom: 0 }}>
-          Available tools
-          {totalToolCount > 0 && <span className="tool-count-badge">{totalToolCount}</span>}
-        </div>
-      </div>
-      <div className="tools-search-wrapper">
-        <input
-          className="tools-search-input"
-          type="text"
-          placeholder="Search tools…"
-          value={toolSearch}
-          onChange={(e) => setToolSearch(e.target.value)}
-        />
-        {toolSearch && (
-          <button className="tools-search-clear" onClick={() => setToolSearch('')}>×</button>
-        )}
-      </div>
+      <div className="sidebar-caption">Available tools</div>
       <div className="tools-list">
-        {Object.keys(filteredTools).length === 0 && toolSearch && (
-          <div className="tools-empty">No tools match "{toolSearch}"</div>
-        )}
-        {Object.entries(filteredTools).map(([agentName, agentTools]) => (
-          <div key={agentName} className="tool-group">
+        {TOOL_GROUPS.map(({ key, label, caption }) => (
+          <div key={key} className="tool-group">
             <button
-              className={`tool-group-header${expandedGroup === agentName ? ' expanded' : ''}`}
-              onClick={() => toggleGroup(agentName)}
+              className={`tool-group-header${expandedGroup === key ? ' expanded' : ''}`}
+              onClick={() => toggleGroup(key)}
             >
-              <span className="tool-group-label">
-                <span className="tool-group-name">{agentName}</span>
-                <span className="tool-group-count">{agentTools.length}</span>
-              </span>
-              <span className="chevron">{expandedGroup === agentName ? '▾' : '▸'}</span>
+              <span>{label}</span>
+              <span className="chevron">{expandedGroup === key ? '▾' : '▸'}</span>
             </button>
-            {expandedGroup === agentName && (
-              <div className="tool-group-items">
-                {agentTools.map((t) => (
-                  <div key={t.name} className="tool-item">
-                    <span className="tool-item-name">{t.name}</span>
-                    {t.description && <span className="tool-item-desc">{t.description}</span>}
+            {expandedGroup === key && (
+              <>
+                {caption && <div className="tool-group-caption">{caption}</div>}
+                {tools[key] && (
+                  <div className="tool-group-items">
+                    {tools[key].map((t) => (
+                      <div key={t.name} className="tool-item">
+                        <span className="tool-item-name">{t.name}</span>
+                        {t.description && <span className="tool-item-desc">{t.description}</span>}
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                )}
+              </>
             )}
           </div>
         ))}
       </div>
 
       <div className="sidebar-spacer" />
-      <a href="/api/tools" target="_blank" rel="noopener noreferrer" className="sidebar-view-link">
-        View all tools
-      </a>
     </aside>
   )
 }

@@ -67,8 +67,9 @@ export default function App() {
   const [toolCallGroups, setToolCallGroups] = useState([])
   const [genieGroups, setGenieGroups] = useState([])
 
-  // Skill selection state
+  // Workflow & skill state
   const [selectedWorkflow, setSelectedWorkflow] = useState(null)
+  const [skillsEnabled, setSkillsEnabled] = useState(false)
 
   // User identity (fetched from backend on mount)
   const [userInfo, setUserInfo] = useState({ user_id: null, user_name: '', user_email: '' })
@@ -355,6 +356,8 @@ export default function App() {
         onDeleteProject={handleDeleteProject}
         selectedWorkflow={selectedWorkflow}
         onSelectWorkflow={setSelectedWorkflow}
+        skillsEnabled={skillsEnabled}
+        onToggleSkills={setSkillsEnabled}
         userInfo={userInfo}
       />
       <main className="main-content">
@@ -369,6 +372,8 @@ export default function App() {
           statusMessage={statusMessage}
           chatHistoryRef={chatHistoryRef}
           selectedWorkflow={selectedWorkflow}
+          onClearWorkflow={() => setSelectedWorkflow(null)}
+          skillsEnabled={skillsEnabled}
         />
         <AgentPanel
           toolCallGroups={toolCallGroups}

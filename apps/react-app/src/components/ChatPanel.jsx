@@ -12,6 +12,13 @@ function ElapsedTimer() {
   return <span className="elapsed-timer">{seconds}s</span>
 }
 
+const COMPOUND_PROPS = [
+  "Structure: SMILES, InChI, MW...",
+  "ADME: LogP, Druglikeness, CYP3A4...",
+  "Bioactivity: IC50...",
+  "All",
+]
+
 export default function ChatPanel({
   messages,
   projectName,
@@ -23,15 +30,28 @@ export default function ChatPanel({
   statusMessage,
   chatHistoryRef,
   selectedWorkflow,
+  onClearWorkflow,
+  skillsEnabled,
 }) {
   const [inputValue, setInputValue] = useState('')
+  const [workflowInput, setWorkflowInput] = useState('')
+  const [compoundProps, setCompoundProps] = useState([])
 
   const handleSubmit = (e) => {
     e.preventDefault()
     if (inputValue.trim() && !isLoading) {
-      const skillName = selectedWorkflow || undefined
+      const skillName = skillsEnabled && selectedWorkflow ? selectedWorkflow : undefined
       onSendMessage(inputValue, { skillName })
       setInputValue('')
+    }
+  }
+
+  const handleWorkflowSubmit = (prompt) => {
+    if (prompt && !isLoading) {
+      const skillName = skillsEnabled && selectedWorkflow ? selectedWorkflow : undefined
+      onSendMessage(prompt, { skillName })
+      setWorkflowInput('')
+      setCompoundProps([])
     }
   }
 
@@ -39,6 +59,38 @@ export default function ChatPanel({
     if (!isLoading) {
       onSendMessage(question)
     }
+  }
+
+  const toggleProp = (prop) => {
+    setCompoundProps(prev =>
+      prev.includes(prop) ? prev.filter(p => p !== prop) : [...prev, prop]
+    )
+  }
+
+  const handleWorkflowKeyDown = (e) => {
+    if (e.key !== 'Enter' || !workflowInput.trim()) return
+
+    if (selectedWorkflow === 'target-identification') {
+      handleWorkflowSubmit(
+        `Use OpenTargets to find targets associated with ${workflowInput}. Show their scores if any and rank in descending order of scores.`
+      )
+    } else if (selectedWorkflow === 'hit-identification') {
+      handleWorkflowSubmit(
+        `Use OpenTargets to find drugs associated with ${workflowInput}. Show their scores if any and rank in descending order of scores.`
+      )
+    } else if (selectedWorkflow === 'safety-assessment') {
+      handleWorkflowSubmit(
+        `Use PubMed to find the safety profile of ${workflowInput}. If citing studies, please state the strength of the evidence based on the study design.`
+      )
+    }
+  }
+
+  const handleLeadOptSubmit = () => {
+    if (!workflowInput.trim() || compoundProps.length === 0) return
+    const propsStr = compoundProps.join(', ')
+    handleWorkflowSubmit(
+      `Use PubChem to get ${propsStr} properties of ${workflowInput}.`
+    )
   }
 
   return (
@@ -91,7 +143,86 @@ export default function ChatPanel({
         )}
       </div>
 
-      {/* Example Questions — only when no skill selected and chat is empty */}
+      {/* Workflow-specific inputs */}
+      {selectedWorkflow === 'target-identification' && (
+        <div className="workflow-input-row">
+          <input
+            className="workflow-text-input"
+            placeholder="e.g., breast cancer, Alzheimer's disease"
+            value={workflowInput}
+            onChange={(e) => setWorkflowInput(e.target.value)}
+            onKeyDown={handleWorkflowKeyDown}
+            disabled={isLoading}
+          />
+          <button className="clear-btn" onClick={onClearWorkflow}>Clear</button>
+        </div>
+      )}
+
+      {selectedWorkflow === 'hit-identification' && (
+        <div className="workflow-input-row">
+          <input
+            className="workflow-text-input"
+            placeholder="e.g., BRCA1, GLP-1"
+            value={workflowInput}
+            onChange={(e) => setWorkflowInput(e.target.value)}
+            onKeyDown={handleWorkflowKeyDown}
+            disabled={isLoading}
+          />
+          <button className="clear-btn" onClick={onClearWorkflow}>Clear</button>
+        </div>
+      )}
+
+      {selectedWorkflow === 'ADME-assessment' && (
+        <div className="workflow-input-section">
+          <div className="workflow-input-row">
+            <input
+              className="workflow-text-input"
+              placeholder="e.g., acetaminophen, semaglutide, CHEMBL25"
+              value={workflowInput}
+              onChange={(e) => setWorkflowInput(e.target.value)}
+              disabled={isLoading}
+            />
+            <button className="clear-btn" onClick={onClearWorkflow}>Clear</button>
+          </div>
+          {workflowInput.trim() && (
+            <div className="compound-props">
+              <span className="props-label">What do you want to know?</span>
+              <div className="pills-row">
+                {COMPOUND_PROPS.map(prop => (
+                  <button
+                    key={prop}
+                    className={`pill${compoundProps.includes(prop) ? ' selected' : ''}`}
+                    onClick={() => toggleProp(prop)}
+                  >
+                    {prop}
+                  </button>
+                ))}
+              </div>
+              {compoundProps.length > 0 && (
+                <button className="submit-workflow-btn" onClick={handleLeadOptSubmit} disabled={isLoading}>
+                  Search
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {selectedWorkflow === 'safety-assessment' && (
+        <div className="workflow-input-row">
+          <input
+            className="workflow-text-input"
+            placeholder="e.g., danuglipron, semaglutide"
+            value={workflowInput}
+            onChange={(e) => setWorkflowInput(e.target.value)}
+            onKeyDown={handleWorkflowKeyDown}
+            disabled={isLoading}
+          />
+          <button className="clear-btn" onClick={onClearWorkflow}>Clear</button>
+        </div>
+      )}
+
+      {/* Example Questions — only when no workflow selected and chat is empty */}
       {!selectedWorkflow && messages.length === 0 && (
         <div className="example-questions">
           <p className="caption"><strong>Try these example questions:</strong></p>
