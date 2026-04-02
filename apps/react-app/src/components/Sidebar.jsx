@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { fetchSkills } from '../api/agentAPI'
-import toolsTsv from '../../tools.txt?raw'
+import toolsTsv from 'src/tools.txt?raw'
 
 const GROUP_LABELS = {
   'PubChem': '🧪 PubChem MCP',
