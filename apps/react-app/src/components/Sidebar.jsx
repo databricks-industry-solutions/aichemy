@@ -7,7 +7,7 @@ const GROUP_LABELS = {
   'OpenTargets': '🎯 OpenTargets MCP',
   'PubMed': '📚 PubMed MCP',
   'Chem Utils': '🛠️ Chem Utilities',
-  'ZINC': '🔍 ZINC V',
+  'ZINC': '🔍 ZINC Vector Search',
 }
 
 function parseToolsTsv(tsv) {
@@ -160,8 +160,8 @@ export default function Sidebar({
             onChange={(e) => onToggleSkills(e.target.checked)}
           />
           Skills
-          <span className="skills-tooltip" title="When enabled, each workflow uses a structured skill prompt for richer, more guided results. Loading skills is SLOW!">?</span>
-        </label>
+          <span className="skills-tooltip" title="Loading skills is SLOW!">?</span>
+ct        </label>
       </div>
       <div className="skills-list">
         {sortedSkillEntries.map(([name, meta]) => (

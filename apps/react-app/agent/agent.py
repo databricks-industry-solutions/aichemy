@@ -180,6 +180,7 @@ def _build_agent() -> StateGraph:
     # exclude get_safety_data that is overly verbose (lists full tox classification)
     _EXCLUDED_MCP_TOOLS = {"get_safety_data"}
     mcp_tools = [t for t in mcp_tools if t.name not in _EXCLUDED_MCP_TOOLS]
+    
     mcp_tools = wrap_mcp_tools_with_resilience(mcp_tools)
     mcp_agent = create_agent(
         llm, tools=mcp_tools, system_prompt=_cfg["prompts"]["mcp"], name="mcp"
