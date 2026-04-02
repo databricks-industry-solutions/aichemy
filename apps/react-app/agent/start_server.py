@@ -19,9 +19,6 @@ from agent.utils import init_mlflow, load_env_from_app_yaml
 load_env_from_app_yaml()
 init_mlflow()
 mlflow.langchain.autolog()
-# _on_databricks = "DATABRICKS_RUNTIME_VERSION" in os.environ or "IS_SERVERLESS" in os.environ
-# if not _on_databricks:
-#     mlflow.tracing.disable()
 
 # Import agent to register @invoke / @stream with the server
 try:

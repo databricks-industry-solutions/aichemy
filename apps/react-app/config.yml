@@ -1,7 +1,7 @@
 host: https://e2-demo-west.cloud.databricks.com/
 catalog: healthcare_lifesciences
 schema: qsar
-experiment_id: 976725379840865
+experiment_id: 976725379793240
 # If no service_principal, defaults to WorkspaceClient() instead
 service_principal:
   aichemy:
@@ -29,6 +29,8 @@ external_mcp:
     url: https://glama.ai/endpoints/mp1ke6xrpi/mcp
     scope: aichemy
     secret: pubmed_glama_api
+  opentargets: 
+    url: https://mcp.platform.opentargets.org/mcp
 retriever:
   zinc_molecular_search:
     vs_endpoint: dbdemos_vs_endpoint
@@ -52,6 +54,11 @@ lakebase:
   database: databricks_postgres
   embedding: databricks-gte-large-en
   embedding_dim: 1024
+example_questions:
+  - What diseases are associated with EGFR?
+  - List all the drugs in the GLP-1 agonists ATC class in DrugBank.
+  - Get the latest review study on the GI toxicity of danuglipron.
+  - Show me compounds similar to vemurafenib. Display their structures.
 prompts:
   chem_utils: >-
     You are a python function that can generate ECFP molecular fingerprint embeddings
