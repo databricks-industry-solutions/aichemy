@@ -11,9 +11,9 @@ cfg = ModelConfig(development_config="../apps/react-app/config.yml")
 
 catalog_name = cfg.get("catalog")
 schema_name = cfg.get("schema")
-drugbank_table = f"{catalog_name}.{schema_name}.drugbank_full"
-genie_cfg = cfg.get("genie").get("drugbank")
-existing_space_id = genie_cfg.get("space_id") if genie_cfg else None
+genie_cfg = cfg.get("genie").get("drugbank",{})
+existing_space_id = genie_cfg.get("space_id")
+drugbank_table = genie_cfg.get("table")
 
 print(f"Table: {drugbank_table}")
 print(f"Existing space ID: {existing_space_id}")
@@ -67,8 +67,7 @@ serialized_space = json.dumps({
         ]
     }
 })
-
-print("serialized_space constructed")
+serialized_space
 
 # COMMAND ----------
 
@@ -76,7 +75,6 @@ from databricks.sdk import WorkspaceClient
 
 ws = WorkspaceClient()
 host = ws.config.host.rstrip("/")
-headers = ws.api_client.default_headers
 
 # Pick a running warehouse
 warehouse_id = None
@@ -93,6 +91,11 @@ if warehouse_id is None:
         raise RuntimeError("No SQL warehouses found in the workspace")
 
 print(f"Using warehouse: {warehouse_id}")
+
+# COMMAND ----------
+
+headers = dict(ws.config.authenticate())
+headers
 
 # COMMAND ----------
 
