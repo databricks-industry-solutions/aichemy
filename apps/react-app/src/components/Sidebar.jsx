@@ -158,10 +158,8 @@ export default function Sidebar({
             type="checkbox"
             checked={skillsEnabled}
             onChange={(e) => onToggleSkills(e.target.checked)}
-          />
-          Skills
-          <span className="skills-tooltip" title="Loading skills is SLOW!">?</span>
-ct        </label>
+          /> Skills (SLOW!)
+        </label>
       </div>
       <div className="skills-list">
         {sortedSkillEntries.map(([name, meta]) => (
