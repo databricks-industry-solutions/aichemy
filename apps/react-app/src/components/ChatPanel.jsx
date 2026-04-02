@@ -12,14 +12,6 @@ function ElapsedTimer() {
   return <span className="elapsed-timer">{seconds}s</span>
 }
 
-// Fallback workflow list (used if workflows prop not provided)
-const DEFAULT_WORKFLOWS = [
-  "🧬 Target identification",
-  "⌬ Hit identification",
-  "🧪 Lead optimization",
-  "☠️ Safety assessment",
-]
-
 const COMPOUND_PROPS = [
   "Structure: SMILES, InChI, MW...",
   "ADME: LogP, Druglikeness, CYP3A4...",
@@ -40,8 +32,6 @@ export default function ChatPanel({
   selectedWorkflow,
   onClearWorkflow,
   skillsEnabled,
-  skillFolderByWorkflow,
-  workflows,
 }) {
   const [inputValue, setInputValue] = useState('')
   const [workflowInput, setWorkflowInput] = useState('')
@@ -50,21 +40,15 @@ export default function ChatPanel({
   const handleSubmit = (e) => {
     e.preventDefault()
     if (inputValue.trim() && !isLoading) {
-      onSendMessage(inputValue)
+      const skillName = skillsEnabled && selectedWorkflow ? selectedWorkflow : undefined
+      onSendMessage(inputValue, { skillName })
       setInputValue('')
     }
   }
 
-  // Resolve the skill folder name for the current workflow (if skills enabled)
-  const getSkillName = () => {
-    if (!skillsEnabled || !selectedWorkflow || !workflows || !skillFolderByWorkflow) return undefined
-    const idx = workflows.indexOf(selectedWorkflow)
-    return idx >= 0 ? skillFolderByWorkflow[idx] : undefined
-  }
-
   const handleWorkflowSubmit = (prompt) => {
     if (prompt && !isLoading) {
-      const skillName = getSkillName()
+      const skillName = skillsEnabled && selectedWorkflow ? selectedWorkflow : undefined
       onSendMessage(prompt, { skillName })
       setWorkflowInput('')
       setCompoundProps([])
@@ -83,26 +67,22 @@ export default function ChatPanel({
     )
   }
 
-  const wf = workflows || DEFAULT_WORKFLOWS
-
-  // Build workflow prompt on Enter
   const handleWorkflowKeyDown = (e) => {
     if (e.key !== 'Enter' || !workflowInput.trim()) return
 
-    if (selectedWorkflow === wf[0]) {
+    if (selectedWorkflow === 'target-identification') {
       handleWorkflowSubmit(
         `Use OpenTargets to find targets associated with ${workflowInput}. Show their scores if any and rank in descending order of scores.`
       )
-    } else if (selectedWorkflow === wf[1]) {
+    } else if (selectedWorkflow === 'hit-identification') {
       handleWorkflowSubmit(
         `Use OpenTargets to find drugs associated with ${workflowInput}. Show their scores if any and rank in descending order of scores.`
       )
-    } else if (selectedWorkflow === wf[3]) {
+    } else if (selectedWorkflow === 'safety-assessment') {
       handleWorkflowSubmit(
         `Use PubMed to find the safety profile of ${workflowInput}. If citing studies, please state the strength of the evidence based on the study design.`
       )
     }
-    // Lead optimization handled by pill selection
   }
 
   const handleLeadOptSubmit = () => {
@@ -164,7 +144,7 @@ export default function ChatPanel({
       </div>
 
       {/* Workflow-specific inputs */}
-      {selectedWorkflow === wf[0] && (
+      {selectedWorkflow === 'target-identification' && (
         <div className="workflow-input-row">
           <input
             className="workflow-text-input"
@@ -178,7 +158,7 @@ export default function ChatPanel({
         </div>
       )}
 
-      {selectedWorkflow === wf[1] && (
+      {selectedWorkflow === 'hit-identification' && (
         <div className="workflow-input-row">
           <input
             className="workflow-text-input"
@@ -192,7 +172,7 @@ export default function ChatPanel({
         </div>
       )}
 
-      {selectedWorkflow === wf[2] && (
+      {selectedWorkflow === 'ADME-assessment' && (
         <div className="workflow-input-section">
           <div className="workflow-input-row">
             <input
@@ -228,7 +208,7 @@ export default function ChatPanel({
         </div>
       )}
 
-      {selectedWorkflow === wf[3] && (
+      {selectedWorkflow === 'safety-assessment' && (
         <div className="workflow-input-row">
           <input
             className="workflow-text-input"
@@ -267,7 +247,7 @@ export default function ChatPanel({
           <input
             type="text"
             className="chat-input"
-            placeholder="Ask AiChemy anything..."
+            placeholder="Ask me anything..."
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             disabled={isLoading}

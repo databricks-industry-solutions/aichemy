@@ -15,8 +15,9 @@ import mlflow
 from mlflow.models import ModelConfig
 
 cfg = ModelConfig(development_config="../apps/react-app/config.yml")
-endpoint_name=cfg.get("retriever").get("vs_endpoint")
-vs_index=cfg.get("retriever").get("vs_index")
+zinc_cfg = cfg.get("retriever").get("zinc_molecular_search", {})
+endpoint_name=zinc_cfg.get("vs_endpoint")
+vs_index=zinc_cfg.get("vs_index")
 
 # COMMAND ----------
 

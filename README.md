@@ -1,78 +1,284 @@
-# AiChemy Solution Accelerator
+# Super Supervisor: Declarative Supervisor Agent with Short-/Long-term Memory and React UI on Databricks Apps
+[![Databricks](https://img.shields.io/badge/Databricks-Apps-FF3621?style=for-the-badge&logo=databricks)](https://databricks.com)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Supervisor-1C3C3C?style=for-the-badge)](https://langchain-ai.github.io/langgraph/)
+[![Lakebase](https://img.shields.io/badge/Lakebase-Postgres-336791?style=for-the-badge&logo=postgresql)](https://docs.databricks.com/en/database/lakebase.html)
 
-[![Databricks](https://img.shields.io/badge/Databricks-Solution_Accelerator-FF3621?style=for-the-badge&logo=databricks)](https://databricks.com)
-[![Unity Catalog](https://img.shields.io/badge/Unity_Catalog-Enabled-00A1C9?style=for-the-badge)](https://docs.databricks.com/en/data-governance/unity-catalog/index.html)
-[![Serverless](https://img.shields.io/badge/Serverless-Compute-00C851?style=for-the-badge)](https://docs.databricks.com/en/compute/serverless.html)
+
+*Super Supervisor* is a declarative framework for building **memory-powered multi-agent supervisors** on Databricks. Define your subagents, tools, and prompts in a single [`config.yml`](apps/react-app/config.yml). Super Supervisor automatically assembles the LangGraph supervisor, connects to Lakebase Autoscaling Postgres for short-/long-term memory, and serves everything as a Databricks App with a React UI.
+
+![screenshot](img/ssupervisor_screenshot.png)
+
+## What It Does
+
+1. **One config, many agents**: A single [`config.yml`](apps/react-app/config.yml) declares your entire agent system: subagents, tools, data sources, and routing prompts. No code changes needed.
+2. **Short-term memory**: Full conversation state is checkpointed to Lakebase via `AsyncCheckpointSaver`, so multi-turn conversations survive server restarts without resending chat history.
+3. **Long-term memory**: Per-user facts, preferences, and notes are stored in Lakebase via `AsyncDatabricksStore` with semantic search. Memories are retrieved automatically before each turn and injected into context.
+4. **Web session memory**
+5. **Agent skills**: Add custom skills to the [`skills`](apps/react-app/skills) folder
+5. **REST API**: Invoke the MLFlow AgentServer at http://localhost:{AGENT_PORT}/invocations
+6. **React web app**: Modern chat interface with session memory, MCP/tool availability, agent tool history, and streaming responses.
+7. **MLflow tracing**: Every invocation is traced end-to-end to MLFlow traces for observability, debugging, and evaluation.
+
 
 ## Usage
-See more in [blog](https://docs.google.com/document/d/1Lmbl2XMKTj7mMda7rObBxvQFMmIpl1OY4k8rDKNDxSQ/edit?tab=t.0#heading=h.a5gdsuyydapd)
-#### Use Case 1: Understand disease mechanisms, find druggable targets and lead generation
-The Guided Tasks panel provides necessary prompts and agent Skills to perform the key steps in a drug discovery workflow of disease -> target -> drug -> literature validation.<br>
-<br>
-- First, given a disease, e.g. ER+/HER2- breast cancer, find therapeutic targets (i.e. ESR1).
-- Second, given the target e.g, ESR1, find drugs associated with a target.
-- Third, given a drug candidate, e.g., camizestrant, check the literature for supporting evidence.
-<img width="1675" height="850" alt="esr1_drugs" src="https://github.com/user-attachments/assets/ef85e4bb-fec8-423d-85ad-f67b2ac6507f" />
+
+### 1. Setup
+```
+git clone git@github.com:yenlow/super_supervisor.git
+cd super_supervisor
+
+# Activate your virtual environment
+uv venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
+```
+
+### 2. Make your edits 
+
+A. [OPTIONAL] Change [`logo.svg`](apps/react-app/public/logo.svg) to your app logo. <br>
+B. [OPTIONAL] Add custom skills to the [`skills`](apps/react-app/skills) folder. <br>
+C. Align [`app.yaml`](apps/react-app/app.yaml) with [`config.yml`](apps/react-app/config.yml), particularly `MLFLOW_EXPERIMENT_ID`.
+D. Edit [`config.yml`](apps/react-app/config.yml). Define which LLM to use, which subagents to create, how they connect to data, and what the supervisor prompt says.
+
+```yaml
+# --- Workspace & model ---
+host: https://your-workspace.cloud.databricks.com/
+catalog: my_catalog
+schema: my_schema
+experiment_id: <mlflow_experiment_id>  # where agent traces will be logged
+llm_endpoint: databricks-claude-sonnet-4
+
+# --- Genie subagents (text-to-SQL) ---
+genie:
+  sales_data: # name your genie here
+    space_id: <genie_space_id>
+    table: my_catalog.my_schema.sales
+
+# --- UC function subagents ---
+uc_functions:
+  analytics: # name your functions agent here
+    - my_catalog.my_schema.compute_metric
+    - my_catalog.my_schema.forecast
+
+# --- External MCP servers (grouped by secret scope) ---
+external_mcp:
+  mcp1:
+    url: https://example.com/mcp
+    scope: secret_scope_for_bearer_token
+    secret: secret_for_bearer_token
+
+# --- Vector Search retriever subagents ---
+retriever:
+  doc_search:
+    vs_endpoint: my_vs_endpoint
+    vs_index: my_catalog.my_schema.docs_index
+    vs_source: my_catalog.my_schema.documents
+    embedding: databricks-gte-large-en
+    k: 5
+    text_column: content
+    columns:
+      - id
+      - content
+      - title
+    search_type: text
+    tool_description: Search internal documents by semantic similarity
+
+# --- Lakebase (memory + project persistence) ---
+lakebase:
+  project_id: <lakebase_project_id>
+  branch_id: <branch_id>
+  endpoint_id: <endpoint_id>
+  database: databricks_postgres
+  embedding: databricks-gte-large-en
+  embedding_dim: 1024
+
+# --- Prompts for each subagent and the supervisor ---
+prompts:
+  analytics: >-
+    You compute business metrics and forecasts.
+  doc_search: >-
+    You search internal documents for relevant information.
+  mcp: >-
+    You connect to external API tools.
+  memory: >-
+    You save and delete long-term user memories.
+  supervisor: >-
+    You are a supervisor managing N agents. Route to the right agent...
+```
+
+The framework reads this [`config.yml`](apps/react-app/config.yml) file at startup and creates subagents  loaded with either genie, retriever, UC functions, MCP servers or Lakebase memory tools and assembles them into a langgraph supervisor with the appropriate subagent and supervisor prompts.
+
+It assumes that the assets defined in [`config.yml`](apps/react-app/config.yml) already exists. See example notebooks on how to set up the various assets.
 
 
-#### Use Case 2: Lead generation by chemical similarity
-Say we want to discover a follow up to Elacestrant, the first oral SERM approved in 2023. We can look up a large chemical library like the ZINC15 database for drug-like molecules structurally similar to Elacestrant and thus are likely to share similar properties according to Quantitative Structure Activity Relationship (QSAR) principles. We can query Databricks Vector Search which stores the 1024-bit Extended-Connectivity Fingerprint (ECFP) molecular embeddings of all 250,000 molecules in ZINC using Elacestrant ECFP embedding as the query string.
-<img width="1671" height="853" alt="elacestrant_sim" src="https://github.com/user-attachments/assets/8dc0a67e-babe-47d3-8bc7-8d69763679f2" />
+### 2. Run locally
+Do local development for faster iteration of your agent app.
 
------------------------------------
-## Installation
-1. Clone this repo into your Databricks workspace as a git folder
+**Prerequisite:** [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install) <br>
+Ensure you can [authenticate](https://docs.databricks.com/aws/en/dev-tools/cli/authentication) into your Databricks Workspace.
+```
+databricks auth login
+```
 
-<img width="1726" height="677" alt="Screenshot 2025-07-23 at 11 05 25 AM" src="https://github.com/user-attachments/assets/55b1729f-ad07-420e-a271-843266abfb71" />
+Start the local servers.
+```
+cd apps/react-app
 
-2. Open the Asset Bundle Editor in the Databricks UI
+# Starts both agent server and web server
+uv run start.py 
 
-<img width="1120" height="665" alt="Screenshot 2025-07-23 at 11 06 12 AM" src="https://github.com/user-attachments/assets/d1f91256-eb8f-4456-8d88-c0a37b1bd4c5" />
+# Starts only agent server
+uv run agent/start_server.py --port 8080
 
-3. Click on "Deploy"
-
-<img width="1523" height="902" alt="Screenshot 2025-07-23 at 11 09 37 AM" src="https://github.com/user-attachments/assets/9564cbdd-c5c5-4210-bf27-2b19e6efc85b" />
-
-4. Navigate to the Deployments tab in the Asset Bundle UI (🚀 icon) and click "Run" on the job available. This will run the notebooks from this project sequentially.
-
-<img width="1527" height="880" alt="Screenshot 2025-07-23 at 11 10 13 AM" src="https://github.com/user-attachments/assets/0f612882-7123-449b-8349-1835bc59523c" />
-
-NB: Genie spaces need to be [created](https://docs.databricks.com/aws/en/genie/set-up) via the UI
+# To invoke the agent server
 
 
----------------------------------
-## Contributing
-1. **git clone** this project locally
-2. Utilize the Databricks CLI to test your changes against a Databricks workspace of your choice
-3. Contribute to repositories with pull requests (PRs), ensuring that you always have a second-party review from a capable teammate
+# Starts only web server
+uv run server/web_server.py
+```
+Set the ports using environment variables `AGENT_PORT` and `DATABRICKS_APP_PORT` respectively or in [`app.yaml`](apps/react-app/app.yaml).
 
-## 📄 Third-Party Package Licenses
-&copy; 2025 Databricks, Inc. All rights reserved. The source in this project is provided subject to the Databricks License [https://databricks.com/db-license-source]. All included or referenced third party libraries are subject to the licenses set forth below.
+NB: [`app.yaml`](apps/react-app/app.yaml) is a way of defining environment variables for Databricks Apps but not in your local environment. Remember to align the environment variables according to your [`config.yml`](apps/react-app/config.yml).
 
-| Package | License | Copyright |
-|---------|---------|-----------|
-| rdkit | Cheminformatics package (C++ and Python based) | BSD 3-Clause |
-| mols2grid | Interactive molecular grid viewer for Jupyter | BSD 3-Clause |
-| databricks-ai-bridge | APIs to interact with Databricks AI features such as AI/BI Genie and Vector Search | Databricks |
-| databricks-sdk | SDK to interact with Databricks | Apache 2.0 |
-| databricks-vectorsearch | SDK to interact with Databricks Vector Search | Databricks |
-| databricks-langchain | LangChain integration for Databricks including memory | Apache 2.0 |
-| databricks-mcp | Model Context Protocol support for Databricks | Apache 2.0 |
-| databricks-agents | SDK for deploying and managing Databricks agents | Databricks |
-| mlflow | ML lifecycle management and agent serving framework | Apache 2.0 |
-| langchain-core | Core abstractions for the LangChain framework | MIT |
-| langchain-mcp-adapters | LangChain adapters for Model Context Protocol tools | MIT |
-| langgraph-supervisor | Multi-agent supervisor orchestration for LangGraph | MIT |
-| mcp | Model Context Protocol Python SDK | MIT |
-| openai | OpenAI API client library | Apache 2.0 |
-| fastapi | Modern Python web framework for building APIs | MIT |
-| uvicorn | ASGI web server for Python | BSD 3-Clause |
-| pydantic | Data validation using Python type annotations | MIT |
-| psycopg | PostgreSQL database adapter for Python | LGPL 3.0 |
-| PyYAML | YAML parser and emitter for Python | MIT |
-| react | JavaScript library for building user interfaces | MIT |
-| react-dom | React package for DOM rendering | MIT |
-| react-markdown | Markdown renderer for React | MIT |
-| remark-gfm | GitHub Flavored Markdown plugin for remark | MIT |
-| uuid | RFC-compliant UUID generation for JavaScript | MIT |
-| vite | Next-generation frontend build tool | MIT |
+
+### 3. Run remotely in [Databricks Apps](https://docs.databricks.com/aws/en/dev-tools/databricks-apps/deploy#deploy-the-app)
+When you are satisfied with the local agent app, deploy it to Databricks Apps.
+
+#### Option 1: Using git
+1. Push to remote git repo.
+2. On your Databricks workspace, create a git folder based on the remote git repo (only do this once). Subsequently, you only need to push/pull updates to/from the git repo. 
+3. Create a custom Databricks App pointing to the folder `app/react-app`
+
+#### Option 2: Using Databricks CLI
+```
+cd apps/react-app
+
+# Sync from local folder to Databricks workspace
+databricks sync --watch . /Workspace/Users/my-email@org.com/my-app
+
+# Deploy app based on the Databricks folder
+databricks apps deploy my-app-name \
+   --source-code-path /Workspace/Users/my-email@org.com/my-app
+```
+
+Remember to grant the app SP the appropriate permissions to your underlying assets (Experiment and secret scope)
+
+### 4. Databricks Assets Bundle (TBD)
+
+The project uses Databricks Asset Bundles. [`databricks.yml`](databricks.yml) is generated from [`config.yml`](apps/react-app/config.yml) by [`gen_databricksyaml.py`](gen_databricksyaml.py). Deploy with:
+
+```bash
+./deploy.sh
+```
+
+Or use the Asset Bundle Editor in the Databricks UI — clone the repo as a Git Folder, open the bundle editor, and click **Deploy**.
+
+
+## Supported Subagent Types
+
+| Config Key | Subagent Type | What It Does |
+|---|---|---|
+| `genie` | **Genie Agent** | Natural-language SQL over Unity Catalog tables via [AI/BI Genie](https://docs.databricks.com/en/genie/index.html). Each entry creates a `GenieAgent` bound to a Genie Space. |
+| `retriever` | **Vector Search Retriever** | Similarity search over Databricks Vector Search indexes. Supports both text embeddings and raw vector queries (e.g., molecular fingerprints). |
+| `uc_functions` | **UC Function Agent** | Calls Python UDFs registered in Unity Catalog as tools. Group related functions under a named agent. |
+| `external_mcp` | **MCP Agent** | Connects to external [Model Context Protocol](https://modelcontextprotocol.io/) servers. Each server exposes its own set of tools that the agent can call. |
+| `lakebase` | **Memory Agent** | Save and delete long-term user memories. Retrieval is automatic — memories are injected into context before the supervisor runs. |
+
+## Load Custom Skills
+Add custom skills into the [`skills`](apps/react-app/skills) folder. Each skill name will be inferred from the frontmatter in `SKILL.md`.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Databricks App                                         │
+│                                                         │
+│  ┌─────────────┐    ┌────────────────────────────────┐  │
+│  │  React UI   │───▶│  FastAPI Proxy                 │  │
+│  │  (Vite)     │    │  (web_server.py)               │  │
+│  └─────────────┘    │  • project CRUD                │  │
+│                     │  • auth / SSO                  │  │
+│                     │  • chat history persistence     │  │
+│                     └────────────┬───────────────────┘  │
+│                                  │                      │
+│                     ┌────────────▼───────────────────┐  │
+│                     │  MLflow AgentServer (agent.py)  │  │
+│                     │  /invocations + /stream         │  │
+│                     └────────────┬───────────────────┘  │
+│                                  │                      │
+│                     ┌────────────▼───────────────────┐  │
+│                     │  LangGraph Supervisor           │  │
+│                     │  ┌──────┐ ┌─────────┐ ┌─────┐  │  │
+│                     │  │Genie │ │Retriever│ │ MCP │  │  │
+│                     │  └──────┘ └─────────┘ └─────┘  │  │
+│                     │  ┌──────────┐ ┌──────────────┐  │  │
+│                     │  │UC Funcs  │ │   Memory     │  │  │
+│                     │  └──────────┘ └──────┬───────┘  │  │
+│                     └───────┬──────────────┼─────────┘  │
+│                             │              │            │
+│                     ┌───────▼────────────────────────┐  │
+│                     │  Agent Skills (skills/)         │  │
+│                     │  • Domain-specific SKILL.md     │  │
+│                     │  • Reference docs & API specs   │  │
+│                     │  • Injected as system prompts   │  │
+│                     └────────────────────────────────┘  │
+│                                            │            │
+└────────────────────────────────────────────┼────────────┘
+                                             │
+                          ┌──────────────────▼──────────────────┐
+                          │  Lakebase Autoscaling Postgres      │
+                          │  • Checkpointer (conversation state)│
+                          │  • Store (long-term user memories)  │
+                          │  • Project metadata & chat history  │
+                          └─────────────────────────────────────┘
+```
+
+
+## Project Structure
+
+```
+├── databricks.yml                  # Asset Bundle definition
+├── gen_databricksyaml.py           # Generates databricks.yml from config
+├── apps/react-app/
+│   ├── config.yml                  # ⬅ THE FILE YOU EDIT
+│   ├── app.yaml                    # Databricks App env vars config
+│   ├── start.py                    # Entrypoint
+│   ├── agent/
+│   │   ├── agent.py                # Supervisor builder (reads config.yml)
+│   │   ├── responses_agent.py      # ResponsesAgent with Lakebase memory
+│   │   ├── start_server.py         # Agent server entrypoint
+│   │   ├── utils.py                # MCP, auth, tool metadata helpers
+│   │   └── utils_memory.py         # Long-term memory save/delete tools
+│   ├── skills/                     # Agent skill definitions
+│   │   ├── skill-1/
+│   │   │   ├── SKILL.md
+│   │   │   └── references/
+│   │   └── skill-2/
+│   │       └── SKILL.md
+│   ├── server/
+│   │   └── web_server.py           # Web server
+│   ├── public/
+│   │   └── logo.svg                # Upload your logo image here
+│   └── src/                        # React frontend
+│       ├── App.jsx
+│       └── components/
+│           ├── ChatPanel.jsx
+│           ├── AgentPanel.jsx
+│           └── Sidebar.jsx
+└── notebooks/                      # Data loading & setup notebooks
+```
+
+## Key Dependencies
+See [requirements.txt](apps/react-app/requirements.txt).
+| Package | Purpose |
+|---|---|
+| `langgraph-supervisor` | Multi-agent supervisor orchestration |
+| `databricks-langchain` | Genie, Vector Search, MCP, UC Functions, Lakebase memory |
+| `mlflow` | Agent serving (`AgentServer`) and tracing |
+| `fastapi` | Backend proxy server |
+| `psycopg` | Lakebase Postgres connectivity |
+| `react` + `vite` | Frontend chat UI |
+
+## [License](LICENSE.md)
+
+&copy; 2025 Databricks, Inc. All rights reserved. The source in this project is provided subject to the [Databricks License](https://databricks.com/db-license-source). Third-party libraries are subject to their respective licenses.

@@ -2,7 +2,7 @@ fastapi>=0.104.0
 uvicorn>=0.24.0
 mlflow>=3.3.2
 databricks-ai-bridge>=0.12.0
-databricks-langchain[memory]>=0.13.0
+databricks-langchain[memory]>=0.17.0
 databricks-mcp
 databricks-vectorsearch
 langchain-mcp-adapters==0.1.14 
