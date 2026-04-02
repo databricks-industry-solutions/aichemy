@@ -355,6 +355,30 @@ def _collect_tool_metadata(mcp_tools: list, cfg: dict) -> dict[str, list[dict]]:
     return result
 
 
+def _strip_lc_ids(result):
+    """Strip LangChain-injected 'id' fields from MCP tool result content blocks.
+
+    The Databricks model serving API rejects extra fields (e.g. ``id``) in
+    tool_result content blocks, causing a 400 BAD_REQUEST error.
+    """
+    if isinstance(result, str):
+        return result
+    if isinstance(result, list):
+        return [
+            {k: v for k, v in item.items() if k != "id"}
+            if isinstance(item, dict) else item
+            for item in result
+        ]
+    if isinstance(result, tuple) and len(result) == 2:
+        return (_strip_lc_ids(result[0]), result[1])
+    if isinstance(result, dict):
+        cleaned = {k: v for k, v in result.items() if k != "id"}
+        if "content" in cleaned and isinstance(cleaned["content"], list):
+            cleaned["content"] = _strip_lc_ids(cleaned["content"])
+        return cleaned
+    return result
+
+
 def wrap_mcp_tools_with_resilience(tools, max_concurrent=2, call_delay=1.0):
     """Wrap MCP tools with concurrency limiting and graceful error handling.
 
@@ -377,7 +401,8 @@ def wrap_mcp_tools_with_resilience(tools, max_concurrent=2, call_delay=1.0):
                 try:
                     result = await _orig(*args, **kwargs)
                     await asyncio.sleep(call_delay)
-                    return result
+                    #return result
+                    return _strip_lc_ids(result)
                 except Exception as e:
                     logger.error(
                         "MCP tool '%s' error: %s: %s", _name, type(e).__name__, e

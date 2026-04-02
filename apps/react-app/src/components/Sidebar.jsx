@@ -1,12 +1,31 @@
 import { useState, useEffect, useMemo } from 'react'
-import { fetchTools, fetchSkills } from '../api/agentAPI'
+import { fetchSkills } from '../api/agentAPI'
+import toolsTsv from '../../tools.txt?raw'
 
-const TOOL_GROUPS = [
-  { key: 'OpenTargets', label: '🎯 OpenTargets MCP', caption: null },
-  { key: 'PubChem', label: '🧪 PubChem MCP', caption: null },
-  { key: 'Chem Utils', label: '🛠️ Chem Utilities', caption: null },
-  { key: 'PubMed', label: '📚 PubMed MCP', caption: null },
-]
+const GROUP_LABELS = {
+  'PubChem': '🧪 PubChem MCP',
+  'OpenTargets': '🎯 OpenTargets MCP',
+  'PubMed': '📚 PubMed MCP',
+  'Chem Utils': '🛠️ Chem Utilities',
+}
+
+function parseToolsTsv(tsv) {
+  const groups = {}
+  for (const line of tsv.trim().split('\n').slice(1)) {
+    const parts = line.split('\t')
+    if (parts.length < 3) continue
+    const [agent, tool, desc] = parts.map(s => s.trim())
+    if (!groups[agent]) groups[agent] = []
+    groups[agent].push({ name: tool, description: desc })
+  }
+  return Object.entries(groups).map(([key, tools]) => ({
+    key,
+    label: GROUP_LABELS[key] || `🔧 ${key}`,
+    tools,
+  }))
+}
+
+const TOOL_GROUPS = parseToolsTsv(toolsTsv)
 
 export default function Sidebar({
   projects = [],
@@ -23,12 +42,10 @@ export default function Sidebar({
 }) {
   const [renamingId, setRenamingId] = useState(null)
   const [renameValue, setRenameValue] = useState('')
-  const [tools, setTools] = useState({})
   const [expandedGroup, setExpandedGroup] = useState(null)
   const [skills, setSkills] = useState({})
 
   useEffect(() => {
-    fetchTools().then(setTools).catch(() => {})
     fetchSkills().then(setSkills).catch(() => {})
   }, [])
 
@@ -135,7 +152,7 @@ export default function Sidebar({
       {/* Guided Workflows header with Skills checkbox */}
       <div className="tools-section-header">
         <div className="sidebar-caption" style={{ marginBottom: 0 }}>Guided workflows</div>
-        <label className="skills-toggle">
+        <label className="skills-toggle" title="Load Skills (SLOW!)">
           <input
             type="checkbox"
             checked={skillsEnabled}
@@ -165,7 +182,7 @@ export default function Sidebar({
       {/* Available Tools */}
       <div className="sidebar-caption">Available tools</div>
       <div className="tools-list">
-        {TOOL_GROUPS.map(({ key, label, caption }) => (
+        {TOOL_GROUPS.map(({ key, label, tools: groupTools }) => (
           <div key={key} className="tool-group">
             <button
               className={`tool-group-header${expandedGroup === key ? ' expanded' : ''}`}
@@ -174,20 +191,15 @@ export default function Sidebar({
               <span>{label}</span>
               <span className="chevron">{expandedGroup === key ? '▾' : '▸'}</span>
             </button>
-            {expandedGroup === key && (
-              <>
-                {caption && <div className="tool-group-caption">{caption}</div>}
-                {tools[key] && (
-                  <div className="tool-group-items">
-                    {tools[key].map((t) => (
-                      <div key={t.name} className="tool-item">
-                        <span className="tool-item-name">{t.name}</span>
-                        {t.description && <span className="tool-item-desc">{t.description}</span>}
-                      </div>
-                    ))}
+            {expandedGroup === key && groupTools.length > 0 && (
+              <div className="tool-group-items">
+                {groupTools.map((t) => (
+                  <div key={t.name} className="tool-item">
+                    <span className="tool-item-name">{t.name}</span>
+                    {t.description && <span className="tool-item-desc">{t.description}</span>}
                   </div>
-                )}
-              </>
+                ))}
+              </div>
             )}
           </div>
         ))}
