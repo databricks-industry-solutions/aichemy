@@ -8,7 +8,6 @@
 | `PubChem:search_by_smiles` | Exact match by SMILES |
 | `PubChem:search_by_inchi` | Search by InChI/InChI key |
 | `PubChem:search_by_cas_number` | Search by CAS Registry Number |
-| `PubChem:get_safety_data` | GHS hazard classifications, pictograms, H/P codes |
 | `PubChem:get_toxicity_info` | LD50, carcinogenicity, mutagenicity, reproductive toxicity |
 | `PubChem:assess_environmental_fate` | Biodegradation, bioaccumulation, aquatic toxicity |
 | `PubChem:get_regulatory_info` | FDA, EPA, REACH, international agency data |

@@ -26,7 +26,7 @@ Use the appropriate PubChem search tool based on input type:
 
 ## Step 2: Get Safety Data
 
-`PubChem:get_safety_data(cid=<CID>)` — returns GHS hazard statements (H-codes), precautionary statements (P-codes), signal word, pictograms, and hazard classes.
+**DO NOT call `get_safety_data`.** This tool returns millions of characters of irrelevant classification hierarchies (ChEBI Ontology, patent classifications, etc.) that will exceed the context window and crash the agent. Skip this step entirely — toxicity and regulatory data from Steps 3 and 4 provide sufficient safety information.
 
 ## Step 3: Get Toxicity Information
 
