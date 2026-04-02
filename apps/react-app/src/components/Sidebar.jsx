@@ -7,6 +7,7 @@ const GROUP_LABELS = {
   'OpenTargets': '🎯 OpenTargets MCP',
   'PubMed': '📚 PubMed MCP',
   'Chem Utils': '🛠️ Chem Utilities',
+  'ZINC': '🔍 ZINC V',
 }
 
 function parseToolsTsv(tsv) {
@@ -152,14 +153,14 @@ export default function Sidebar({
       {/* Guided Workflows header with Skills checkbox */}
       <div className="tools-section-header">
         <div className="sidebar-caption" style={{ marginBottom: 0 }}>Guided workflows</div>
-        <label className="skills-toggle" title="Load Skills (SLOW!)">
+        <label className="skills-toggle">
           <input
             type="checkbox"
             checked={skillsEnabled}
             onChange={(e) => onToggleSkills(e.target.checked)}
           />
           Skills
-          <span className="skills-tooltip" title="When enabled, each workflow uses a structured skill prompt for richer, more guided results">?</span>
+          <span className="skills-tooltip" title="When enabled, each workflow uses a structured skill prompt for richer, more guided results. Loading skills is SLOW!">?</span>
         </label>
       </div>
       <div className="skills-list">
