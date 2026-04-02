@@ -1,28 +1,29 @@
-# Super Supervisor: Declarative Supervisor Agent with Short-/Long-term Memory and React UI on Databricks Apps
+# AiChemy Solution Accelerator
 [![Databricks](https://img.shields.io/badge/Databricks-Apps-FF3621?style=for-the-badge&logo=databricks)](https://databricks.com)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Supervisor-1C3C3C?style=for-the-badge)](https://langchain-ai.github.io/langgraph/)
 [![Lakebase](https://img.shields.io/badge/Lakebase-Postgres-336791?style=for-the-badge&logo=postgresql)](https://docs.databricks.com/en/database/lakebase.html)
 
+## Usage
+See more in [blog](https://docs.google.com/document/d/1Lmbl2XMKTj7mMda7rObBxvQFMmIpl1OY4k8rDKNDxSQ/edit?tab=t.0#heading=h.a5gdsuyydapd)
+#### Use Case 1: Understand disease mechanisms, find druggable targets and lead generation
+The Guided Tasks panel provides necessary prompts and agent Skills to perform the key steps in a drug discovery workflow of disease -> target -> drug -> literature validation.<br>
+<br>
+- First, given a disease, e.g. ER+/HER2- breast cancer, find therapeutic targets (i.e. ESR1).
+- Second, given the target e.g, ESR1, find drugs associated with a target.
+- Third, given a drug candidate, e.g., camizestrant, check the literature for supporting evidence.
+<img width="1675" height="850" alt="esr1_drugs" src="https://github.com/user-attachments/assets/ef85e4bb-fec8-423d-85ad-f67b2ac6507f" />
 
-*Super Supervisor* is a declarative framework for building **memory-powered multi-agent supervisors** on Databricks. Define your subagents, tools, and prompts in a single [`config.yml`](apps/react-app/config.yml). Super Supervisor automatically assembles the LangGraph supervisor, connects to Lakebase Autoscaling Postgres for short-/long-term memory, and serves everything as a Databricks App with a React UI.
+
+#### Use Case 2: Lead generation by chemical similarity
+Say we want to discover a follow up to Elacestrant, the first oral SERM approved in 2023. We can look up a large chemical library like the ZINC15 database for drug-like molecules structurally similar to Elacestrant and thus are likely to share similar properties according to Quantitative Structure Activity Relationship (QSAR) principles. We can query Databricks Vector Search which stores the 1024-bit Extended-Connectivity Fingerprint (ECFP) molecular embeddings of all 250,000 molecules in ZINC using Elacestrant ECFP embedding as the query string.
+<img width="1671" height="853" alt="elacestrant_sim" src="https://github.com/user-attachments/assets/8dc0a67e-babe-47d3-8bc7-8d69763679f2" />
+
 
 ![screenshot](img/ssupervisor_screenshot.png)
 
-## What It Does
 
-1. **One config, many agents**: A single [`config.yml`](apps/react-app/config.yml) declares your entire agent system: subagents, tools, data sources, and routing prompts. No code changes needed.
-2. **Short-term memory**: Full conversation state is checkpointed to Lakebase via `AsyncCheckpointSaver`, so multi-turn conversations survive server restarts without resending chat history.
-3. **Long-term memory**: Per-user facts, preferences, and notes are stored in Lakebase via `AsyncDatabricksStore` with semantic search. Memories are retrieved automatically before each turn and injected into context.
-4. **Web session memory**
-5. **Agent skills**: Add custom skills to the [`skills`](apps/react-app/skills) folder
-5. **REST API**: Invoke the MLFlow AgentServer at http://localhost:{AGENT_PORT}/invocations
-6. **React web app**: Modern chat interface with session memory, MCP/tool availability, agent tool history, and streaming responses.
-7. **MLflow tracing**: Every invocation is traced end-to-end to MLFlow traces for observability, debugging, and evaluation.
-
-
-## Usage
-
-### 1. Setup
+## Setup
+### 1. Installation
 ```
 git clone git@github.com:yenlow/super_supervisor.git
 cd super_supervisor
@@ -111,7 +112,7 @@ The framework reads this [`config.yml`](apps/react-app/config.yml) file at start
 It assumes that the assets defined in [`config.yml`](apps/react-app/config.yml) already exists. See example notebooks on how to set up the various assets.
 
 
-### 2. Run locally
+### 3. Run locally
 Do local development for faster iteration of your agent app.
 
 **Prerequisite:** [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install) <br>
@@ -125,16 +126,24 @@ Start the local servers.
 cd apps/react-app
 
 # Starts both agent server and web server
+# Go to http://localhost:{DATABRICKS_APPS_PORT}, e.g. 8010, 8000
 uv run start.py 
 
 # Starts only agent server
 uv run agent/start_server.py --port 8080
 
 # To invoke the agent server
+curl -X POST http://localhost:{AGENT_PORT}/invocations \
+-H "Content-Type: application/json" \
+-d '{
+   "input": [{"role": "user", "content": "What is my favorite color?"}],
+   "context": {"user_id": "test@example.com"},
+   "stream": true
+}'
 
-
-# Starts only web server
+# Starts web server
 uv run server/web_server.py
+
 ```
 Set the ports using environment variables `AGENT_PORT` and `DATABRICKS_APP_PORT` respectively or in [`app.yaml`](apps/react-app/app.yaml).
 
@@ -231,41 +240,6 @@ Add custom skills into the [`skills`](apps/react-app/skills) folder. Each skill 
                           │  • Store (long-term user memories)  │
                           │  • Project metadata & chat history  │
                           └─────────────────────────────────────┘
-```
-
-
-## Project Structure
-
-```
-├── databricks.yml                  # Asset Bundle definition
-├── gen_databricksyaml.py           # Generates databricks.yml from config
-├── apps/react-app/
-│   ├── config.yml                  # ⬅ THE FILE YOU EDIT
-│   ├── app.yaml                    # Databricks App env vars config
-│   ├── start.py                    # Entrypoint
-│   ├── agent/
-│   │   ├── agent.py                # Supervisor builder (reads config.yml)
-│   │   ├── responses_agent.py      # ResponsesAgent with Lakebase memory
-│   │   ├── start_server.py         # Agent server entrypoint
-│   │   ├── utils.py                # MCP, auth, tool metadata helpers
-│   │   └── utils_memory.py         # Long-term memory save/delete tools
-│   ├── skills/                     # Agent skill definitions
-│   │   ├── skill-1/
-│   │   │   ├── SKILL.md
-│   │   │   └── references/
-│   │   └── skill-2/
-│   │       └── SKILL.md
-│   ├── server/
-│   │   └── web_server.py           # Web server
-│   ├── public/
-│   │   └── logo.svg                # Upload your logo image here
-│   └── src/                        # React frontend
-│       ├── App.jsx
-│       └── components/
-│           ├── ChatPanel.jsx
-│           ├── AgentPanel.jsx
-│           └── Sidebar.jsx
-└── notebooks/                      # Data loading & setup notebooks
 ```
 
 ## Key Dependencies
