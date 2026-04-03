@@ -9,7 +9,11 @@
 
 # COMMAND ----------
 
-# Provide SP credentials here for connecting to LakeBase
+# MAGIC %md
+# MAGIC ### Provide SP credentials here for connecting to LakeBase
+
+# COMMAND ----------
+
 # Method 1: Get from secrets
 client_id = dbutils.secrets.get(scope="aichemy", key="client_id")
 client_secret = dbutils.secrets.get(scope="aichemy", key="client_secret")
@@ -33,35 +37,18 @@ cfg.to_dict()
 
 from databricks.sdk import WorkspaceClient
 
-instance_name = cfg.get("lakebase_agent").get("instance_name")
 ws_client = WorkspaceClient(
-    host=cfg.get("host"),
-    client_id=client_id,
-    client_secret=client_secret
+    host=cfg.get("host"), client_id=client_id, client_secret=client_secret
 )
-
-# COMMAND ----------
-
 ws_info = ws_client.current_user.me()
 display(ws_info)
 
 # COMMAND ----------
 
-from databricks.sdk.service.database import DatabaseInstance
-
-# Check if database instance exist
-if any(db.name == instance_name for db in ws_client.database.list_database_instances()):
-    print(f"Database instance {instance_name} already exists")
-else:  # database instance does not exist
-    instance = ws_client.database.create_database_instance(
-        DatabaseInstance(name=instance_name, capacity="CU_1")
-    )
-
-# COMMAND ----------
-
 # MAGIC %md
+# MAGIC ## Create an [Autoscaling Lakebase Project](https://docs.databricks.com/aws/en/oltp/projects/get-started)
 # MAGIC Ensure that you have:
-# MAGIC 1. Granted the necessary permissions (SP can CreateDB) to the Lakebase instance
+# MAGIC 1. Granted the necessary permissions (SP can CreateDB) to the Lakebase project
 # MAGIC 2. `CREATE DATABASE <database_name>;`
 # MAGIC 3. `GRANT ALL PRIVILEGES ON SCHEMA public TO "<CLIENT_ID>";`
 
@@ -70,20 +57,8 @@ else:  # database instance does not exist
 from lakebase import LakebaseConnect
 from databricks.sdk import WorkspaceClient
 
-# Test connection to Provisioned Lakebase
-dbClient = LakebaseConnect(
-    user = client_id,
-    password = None, # leave None to generate ephemeral token (1h)
-    instance_name = cfg.get("lakebase_agent").get("instance_name"), 
-    database = cfg.get("lakebase_agent").get("database"),
-    wsClient = ws_client
-)
-dbClient.test_query()
-
-# COMMAND ----------
-
 # Test connection to autoscaled Lakebase
-dbClient2 = LakebaseConnect(
+dbClient = LakebaseConnect(
     user = client_id,
     password = None, # leave None to generate ephemeral token (1h)
     project_id = cfg.get("lakebase").get("project_id"),
@@ -91,7 +66,7 @@ dbClient2 = LakebaseConnect(
     endpoint_id = cfg.get("lakebase").get("endpoint_id"),
     wsClient = ws_client
 )
-dbClient2.test_query()
+dbClient.test_query()
 
 # COMMAND ----------
 

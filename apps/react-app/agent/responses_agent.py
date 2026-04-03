@@ -83,7 +83,7 @@ class WrappedAgent(ResponsesAgent):
         lakebase_kwargs = dict(
             project=self.lakebase_autoscaling_project,
             branch=self.lakebase_autoscaling_branch,
-            workspace_client=self.workspace_client,
+            workspace_client=self.workspace_client
         )
         async with (
             AsyncDatabricksStore(

@@ -23,7 +23,6 @@ PubChem	get_assay_info	Get detailed information for a specific bioassay by AID
 PubChem	get_compound_bioactivities	Get all bioassay results and activities for a compound
 PubChem	search_by_target	Find compounds tested against a specific biological target
 PubChem	compare_activity_profiles	Compare bioactivity profiles across multiple compounds
-PubChem	get_safety_data	Get GHS hazard classifications and safety information
 PubChem	get_toxicity_info	Get toxicity data including LD50, carcinogenicity, and mutagenicity
 PubChem	assess_environmental_fate	Assess environmental fate including biodegradation and bioaccumulation
 PubChem	get_regulatory_info	Get regulatory information from FDA, EPA, and international agencies
@@ -47,3 +46,4 @@ OpenTargets	get_open_targets_graphql_schema	Retrieve the Open Targets Platform G
 OpenTargets	search_entities	Search for entities across multiple types using the Open Targets Platform search API.
 OpenTargets	query_open_targets_graphql	Execute GraphQL queries against the Open Targets Platform API.
 OpenTargets	batch_query_open_targets_graphql	Execute the same GraphQL query multiple times with different variable sets.
+ZINC VS	search_similar	Get similar molecules based on 1024-bit ECFP4

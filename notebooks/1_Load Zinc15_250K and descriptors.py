@@ -52,7 +52,7 @@ table_description = "The table contains 250,000 chemical compounds from the ZINC
 
 # MAGIC %sh
 # MAGIC # # Open terminal and copy from local to Vol
-# MAGIC # cp /Workspace/Repos/yen.low@databricks.com/aichemy/data/zinc15_250K_2D.csv /Volumes/aichemy2_catalog/aichemy/data/.
+# MAGIC cp /Workspace/Repos/yen.low@databricks.com/aichemy/data/zinc15_250K_2D.csv /Volumes/aichemy2_catalog/aichemy/data/.
 
 # COMMAND ----------
 
@@ -77,10 +77,6 @@ spark.sql(
 ALTER TABLE {table_destination} SET TBLPROPERTIES('comment'='{table_description}')
 """
 )
-
-# COMMAND ----------
-
-# df = spark.table(table_destination)
 
 # COMMAND ----------
 

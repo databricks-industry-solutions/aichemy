@@ -15,29 +15,6 @@ import {
   deleteProject as deleteProjectAPI,
 } from './api/agentAPI'
 
-// Workflow definitions (matches Streamlit app)
-const WORKFLOWS = [
-  "🧬 Target identification",
-  "⌬ Hit identification",
-  "🧪 Lead optimization",
-  "☠️ Safety assessment",
-]
-
-const WORKFLOW_CAPTIONS = [
-  "Based on a disease, get its associated targets",
-  "Based on a target, get its associated drugs",
-  "Based on a compound, get its properties",
-  "Based on a compound, get its safety info",
-]
-
-// Workflow index → skill folder name (used when skills checkbox is enabled)
-const SKILL_FOLDER_BY_WORKFLOW = {
-  0: 'target-identification',
-  1: 'hit-identification',
-  2: 'ADME-assessment',
-  3: 'safety-assessment',
-}
-
 const EXAMPLE_QUESTIONS = [
   "What diseases are associated with EGFR",
   "List all the drugs in the GLP-1 agonists ATC class in DrugBank",
@@ -90,7 +67,7 @@ export default function App() {
   const [toolCallGroups, setToolCallGroups] = useState([])
   const [genieGroups, setGenieGroups] = useState([])
 
-  // Workflow state
+  // Workflow & skill state
   const [selectedWorkflow, setSelectedWorkflow] = useState(null)
   const [skillsEnabled, setSkillsEnabled] = useState(false)
 
@@ -377,8 +354,6 @@ export default function App() {
         onNewProject={handleNewProject}
         onRenameProject={handleRenameProject}
         onDeleteProject={handleDeleteProject}
-        workflows={WORKFLOWS}
-        workflowCaptions={WORKFLOW_CAPTIONS}
         selectedWorkflow={selectedWorkflow}
         onSelectWorkflow={setSelectedWorkflow}
         skillsEnabled={skillsEnabled}
@@ -399,8 +374,6 @@ export default function App() {
           selectedWorkflow={selectedWorkflow}
           onClearWorkflow={() => setSelectedWorkflow(null)}
           skillsEnabled={skillsEnabled}
-          skillFolderByWorkflow={SKILL_FOLDER_BY_WORKFLOW}
-          workflows={WORKFLOWS}
         />
         <AgentPanel
           toolCallGroups={toolCallGroups}

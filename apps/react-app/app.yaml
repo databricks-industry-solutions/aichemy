@@ -2,6 +2,7 @@ command:
   - uv
   - run
   - start.py
+
 env:
   - name: AGENT_PORT
     value: 8080

@@ -14,7 +14,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def _load_config(file=None):
+def load_config(file=None):
     """Load config.yml from app root (parent of agent/)."""
     if file:
         with open(file) as f:
@@ -24,7 +24,6 @@ def _load_config(file=None):
         file = app_root / "config.yml"
     with open(file) as f:
         return yaml.safe_load(f)
-
 
 
 def load_env_from_app_yaml():
@@ -51,10 +50,11 @@ def init_mlflow():
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "databricks")
     registry_uri = os.environ.get("MLFLOW_REGISTRY_URI", "databricks-uc")
     experiment_id = os.environ.get("MLFLOW_EXPERIMENT_ID")
+    print(f"Setting MLflow experiment to {experiment_id}")
 
     if experiment_id is None:
-        cfg = _load_config()
-        experiment_id = (cfg or {}).get("experiment_id", "1001868044455114")
+        cfg = load_config()
+        experiment_id = (cfg or {}).get("experiment_id")
     mlflow.set_tracking_uri(tracking_uri)
     mlflow.set_registry_uri(registry_uri)
     mlflow.set_experiment(experiment_id=str(experiment_id).strip())
@@ -66,18 +66,36 @@ def get_secret(scope: str, key: str) -> str:
     return b64decode(secret_base64).decode("utf-8")
 
 
+def get_secret_from_cfg(cfg) -> tuple[str | None, str | None]:
+    """Extract SP client_id and client_secret from a config dict via Databricks secrets."""
+    sp_creds = cfg.get("service_principal", {})
+    print(f"Service Principal credentials: {sp_creds}")
+    if not sp_creds:
+        return None, None
+    scope_name = next(iter(sp_creds))
+    scope_cfg = sp_creds[scope_name]
+    client_id = get_secret(scope=scope_name, key=scope_cfg["client_id"])
+    client_secret = get_secret(scope=scope_name, key=scope_cfg["client_secret"])
+    print(f"Service Principal credentials found for {scope_name}: {client_id}")
+    return client_id, client_secret
+
+
 def init_workspace_client(cfg):
     # SP login takes precedence over PAT/profile login (for Lakebase writes)
-    client_id = get_secret(scope='aichemy', key='client_id')
-    client_secret = get_secret(scope='aichemy', key='client_secret')
-    try:
-        ws_client = WorkspaceClient(
-            host=cfg["host"],
-            client_id=client_id,
-            client_secret=client_secret
-        )
-    except Exception as e:
-        print(f"Error initializing workspace client with SP. Using WorkspaceClient() instead: {e}")
+    client_id, client_secret = get_secret_from_cfg(cfg)
+    if client_id and client_secret:
+        try:
+            ws_client = WorkspaceClient(
+                host=cfg["host"], client_id=client_id, client_secret=client_secret
+            )
+            print(f"Workspace client initialized with SP: {client_id}")
+        except Exception as e:
+            print(
+                f"Error initializing workspace client with SP. Using WorkspaceClient() instead: {e}"
+            )
+            ws_client = WorkspaceClient()
+    else:
+        logger.warning("Service Principal credentials not in config.yml. Defaulting to WorkspaceClient()")
         ws_client = WorkspaceClient()
     return ws_client
 
@@ -101,15 +119,23 @@ def get_trace(trace_id: str, retries: int = 5, delay: float = 2.0):
                 state = str(getattr(trace.info, "state", ""))
                 spans = trace.data.spans if trace.data else []
                 if state in _TERMINAL and len(spans) > 0:
-                    print(f"[get_trace] Attempt {attempt+1}/{retries}: trace ready "
-                          f"(state={state}, spans={len(spans)})")
+                    print(
+                        f"[get_trace] Attempt {attempt+1}/{retries}: trace ready "
+                        f"(state={state}, spans={len(spans)})"
+                    )
                     return trace
-                print(f"[get_trace] Attempt {attempt+1}/{retries}: trace exists but not terminal "
-                      f"(state={state}, spans={len(spans)}), retrying...")
+                print(
+                    f"[get_trace] Attempt {attempt+1}/{retries}: trace exists but not terminal "
+                    f"(state={state}, spans={len(spans)}), retrying..."
+                )
             else:
-                print(f"[get_trace] Attempt {attempt+1}/{retries}: trace not found yet, retrying...")
+                print(
+                    f"[get_trace] Attempt {attempt+1}/{retries}: trace not found yet, retrying..."
+                )
         except Exception as e:
-            print(f"[get_trace] Attempt {attempt+1}/{retries}: exception {type(e).__name__}: {e}, retrying...")
+            print(
+                f"[get_trace] Attempt {attempt+1}/{retries}: exception {type(e).__name__}: {e}, retrying..."
+            )
         if attempt < retries - 1:
             time.sleep(delay)
     # Last-ditch: return whatever we have (may be incomplete)
@@ -119,12 +145,12 @@ def get_trace(trace_id: str, retries: int = 5, delay: float = 2.0):
         return None
 
 
-
 # ---------------------------------------------------------------------------
 # MCP utils
 # ---------------------------------------------------------------------------
 
 _mcp_loop = asyncio.new_event_loop()
+
 
 def _run_mcp_loop():
     asyncio.set_event_loop(_mcp_loop)
@@ -141,8 +167,14 @@ def _log_exception_group(exc: BaseException, server_names: str = "") -> None:
     prefix = f"[{server_names}] " if server_names else ""
     if isinstance(exc, BaseExceptionGroup):
         for i, sub in enumerate(exc.exceptions, 1):
-            logger.error("  %sMCP sub-exception %d/%d: %s: %s", prefix, i, len(exc.exceptions),
-                         type(sub).__name__, sub)
+            logger.error(
+                "  %sMCP sub-exception %d/%d: %s: %s",
+                prefix,
+                i,
+                len(exc.exceptions),
+                type(sub).__name__,
+                sub,
+            )
             _log_exception_group(sub, server_names=server_names)
     else:
         logger.error("  %sMCP root cause: %s: %s", prefix, type(exc).__name__, exc)
@@ -164,23 +196,29 @@ def build_mcp_list(cfg, ws_client=None):
 
     for name, conn_name in cfg.get("uc_connections", {}).items():
         if ws_client is None:
-            logger.warning("ws_client is None, using WorkspaceClient() instead for %s", name)
+            logger.warning(
+                "ws_client is None, using WorkspaceClient() instead for %s", name
+            )
             ws_client = WorkspaceClient()
 
-        servers.append(DatabricksMCPServer(
-            name=name,
-            url=f"{host}api/2.0/mcp/external/{conn_name}",
-            workspace_client=ws_client,
-            timeout=60,
-            terminate_on_close=False,
-        ))
+        servers.append(
+            DatabricksMCPServer(
+                name=name,
+                url=f"{host}api/2.0/mcp/external/{conn_name}",
+                workspace_client=ws_client,
+                timeout=60,
+                terminate_on_close=False,
+            )
+        )
 
-    for name, url in cfg.get("external_mcp", {}).items():
+    for name, mcp_cfg in cfg.get("external_mcp", {}).items():
+        url = mcp_cfg["url"]
         kwargs = dict(name=name, url=url, timeout=60, terminate_on_close=False)
-        if "glama.ai" in url:
+        if "secret" in mcp_cfg:
             kwargs["headers"] = {
-                "Authorization": f"Bearer {get_secret(scope='aichemy', key=f'{name}_glama_api')}"
+                "Authorization": f"Bearer {get_secret(scope=mcp_cfg.get('scope'), key=mcp_cfg.get('secret'))}"
             }
+            print(f"Getting bearer token from scope {mcp_cfg.get('scope')} and secret {mcp_cfg.get('secret')}")
         servers.append(MCPServer(**kwargs))
 
     return servers
@@ -189,6 +227,7 @@ def build_mcp_list(cfg, ws_client=None):
 def _load_mcp_tools_individually(servers, max_retries: int = 3) -> list:
     """Try loading tools from each MCP server with retries; skip persistent failures."""
     from databricks_langchain import DatabricksMultiServerMCPClient
+
     all_tools = []
     for srv in servers:
         loaded = False
@@ -196,18 +235,31 @@ def _load_mcp_tools_individually(servers, max_retries: int = 3) -> list:
             single_client = DatabricksMultiServerMCPClient([srv])
             try:
                 tools = _mcp_run(single_client.get_tools(), timeout=300)
-                logger.info("  ✓ %s: %d tools loaded (attempt %d)", srv.name, len(tools), attempt)
+                logger.info(
+                    "  ✓ %s: %d tools loaded (attempt %d)",
+                    srv.name,
+                    len(tools),
+                    attempt,
+                )
                 all_tools.extend(tools)
                 loaded = True
                 break
             except BaseException as e:
                 _log_exception_group(e, server_names=srv.name)
                 if attempt < max_retries:
-                    wait = 2 ** attempt
-                    logger.info("  ⟳ %s: retry %d/%d in %ds…", srv.name, attempt, max_retries, wait)
+                    wait = 2**attempt
+                    logger.info(
+                        "  ⟳ %s: retry %d/%d in %ds…",
+                        srv.name,
+                        attempt,
+                        max_retries,
+                        wait,
+                    )
                     time.sleep(wait)
                 else:
-                    logger.warning("  ✗ %s: failed after %d attempts", srv.name, max_retries)
+                    logger.warning(
+                        "  ✗ %s: failed after %d attempts", srv.name, max_retries
+                    )
     logger.info("MCP fallback complete: %d total tools loaded", len(all_tools))
     return all_tools
 
@@ -270,7 +322,7 @@ def _keepalive_loop(get_state, keepalive_secs=600) -> None:
                 idle = time.monotonic() - _last_activity
             if idle >= keepalive_secs:
                 _ping_mcp(mcp)
-                #_warmup(agent)
+                # _warmup(agent)
                 _touch_activity()
 
 
@@ -280,17 +332,50 @@ def _collect_tool_metadata(mcp_tools: list, cfg: dict) -> dict[str, list[dict]]:
     from agent.utils_memory import memory_write_tools
 
     def _meta(t):
-        return {"name": getattr(t, "name", str(t)), "description": getattr(t, "description", "") or ""}
+        return {
+            "name": getattr(t, "name", str(t)),
+            "description": getattr(t, "description", "") or "",
+        }
 
     result: dict[str, list[dict]] = {}
     result["mcp"] = [_meta(t) for t in mcp_tools]
     result["memory"] = [_meta(t) for t in memory_write_tools()]
     for agent_name, functions in cfg.get("uc_functions", {}).items():
-        result[agent_name] = [_meta(t) for t in UCFunctionToolkit(function_names=functions).tools]
+        result[agent_name] = [
+            _meta(t) for t in UCFunctionToolkit(function_names=functions).tools
+        ]
     for agent_name in cfg.get("genie", {}):
-        result[agent_name] = [{"name": "genie_query", "description": "Text-to-SQL via Genie Space"}]
+        result[agent_name] = [
+            {"name": "genie_query", "description": "Text-to-SQL via Genie Space"}
+        ]
     for agent_name, rc in cfg.get("retriever", {}).items():
-        result[agent_name] = [{"name": agent_name, "description": rc.get("tool_description", "")}]
+        result[agent_name] = [
+            {"name": agent_name, "description": rc.get("tool_description", "")}
+        ]
+    return result
+
+
+def _strip_lc_ids(result):
+    """Strip LangChain-injected 'id' fields from MCP tool result content blocks.
+
+    The Databricks model serving API rejects extra fields (e.g. ``id``) in
+    tool_result content blocks, causing a 400 BAD_REQUEST error.
+    """
+    if isinstance(result, str):
+        return result
+    if isinstance(result, list):
+        return [
+            {k: v for k, v in item.items() if k != "id"}
+            if isinstance(item, dict) else item
+            for item in result
+        ]
+    if isinstance(result, tuple) and len(result) == 2:
+        return (_strip_lc_ids(result[0]), result[1])
+    if isinstance(result, dict):
+        cleaned = {k: v for k, v in result.items() if k != "id"}
+        if "content" in cleaned and isinstance(cleaned["content"], list):
+            cleaned["content"] = _strip_lc_ids(cleaned["content"])
+        return cleaned
     return result
 
 
@@ -309,14 +394,19 @@ def wrap_mcp_tools_with_resilience(tools, max_concurrent=2, call_delay=1.0):
         name = tool.name
         expects_tuple = getattr(tool, "response_format", None) == "content_and_artifact"
 
-        async def _wrapped(*args, _orig=orig, _name=name, _tuple=expects_tuple, **kwargs):
+        async def _wrapped(
+            *args, _orig=orig, _name=name, _tuple=expects_tuple, **kwargs
+        ):
             async with sem:
                 try:
                     result = await _orig(*args, **kwargs)
                     await asyncio.sleep(call_delay)
-                    return result
+                    #return result
+                    return _strip_lc_ids(result)
                 except Exception as e:
-                    logger.error("MCP tool '%s' error: %s: %s", _name, type(e).__name__, e)
+                    logger.error(
+                        "MCP tool '%s' error: %s: %s", _name, type(e).__name__, e
+                    )
                     err_msg = (
                         f"Error calling tool '{_name}': {type(e).__name__}: {e}. "
                         f"The external service may be temporarily unavailable or "
@@ -326,4 +416,3 @@ def wrap_mcp_tools_with_resilience(tools, max_concurrent=2, call_delay=1.0):
 
         tool.coroutine = _wrapped
     return tools
-

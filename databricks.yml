@@ -1,49 +1,90 @@
 bundle:
-  name: dbx-dabs-demo
+  name: aichemy
 
-# Understand how variables work so I can reference newly generated VS index and genie space
-# TODO: how to create genie space programmatically
-# Reference variables in NB
+# ---------------------------------------------------------------------------
+# Variables — defaults drawn from apps/react-app/config.yml
+# Override per-target or at deploy time:  databricks bundle deploy -var="catalog=prod_catalog"
+# ---------------------------------------------------------------------------
 variables:
-  # The "warehouse_id" variable is used to reference the warehouse used by the dashboard.
+  catalog:
+    description: "Unity Catalog name"
+    default: "aichemy2_catalog"
+
+  schema:
+    description: "Schema within the catalog"
+    default: "aichemy"
+
   warehouse_id:
     lookup:
-      # Replace this with the name of your SQL warehouse.
-      warehouse: "Shared Endpoint"
-      
-  # Environment variable used for deployment paths
-  environment:
-    description: "Deployment environment (dev, staging, prod)"
-    default: "dev"
+      warehouse: "Serverless Starter Warehouse"
 
+  experiment_id:
+    description: "MLflow experiment ID for tracing"
+    default: "1001868044455114"
+
+  llm_endpoint:
+    description: "LLM model serving endpoint"
+    default: "databricks-claude-opus-4-5"
+
+# ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
 targets:
   dev:
     default: true
     mode: development
+    workspace:
+      host: https://fevm-aichemy2.cloud.databricks.com/
 
-# See more about resource configuration at https://docs.databricks.com/aws/en/dev-tools/bundles/resources
+  prod:
+    mode: production
+    workspace:
+      host: https://fevm-aichemy2.cloud.databricks.com/
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
 resources:
   apps:
-    app:
-      name: "aichemy-app"
-      description: "Application to chat with Drugbank and do a similarity vector search on ZINC (in place of a proprietary chemical library)"
-      source_code_path: "/Users/${workspace.current_user.userName}/dbx-dabs-demo-${var.environment}/files/apps/app"
-
-# This is the installation workflow. It will be run when the bundle is deployed.
+    aichemy_app:
+      name: "aichemy-app-${bundle.target}"
+      description: >-
+        AI Chemistry assistant — chat with Drugbank (FDA-approved drugs),
+        search ZINC molecular database by fingerprint similarity,
+        and query PubChem / PubMed / OpenTargets via MCP.
+      source_code_path: ./apps/react-app
   jobs:
-    demo_workflow:
-      name: "Load data, compute features, create VS and genie room"
+    data_setup:
+      name: "[${bundle.target}] AiChemy – Load data and create vector search"
       tasks:
         - task_key: load_drugbank
           notebook_task:
-            notebook_path: "./notebooks/1_Load Drugbank and descriptors.py"
+            notebook_path: ./notebooks/1_Load Drugbank and descriptors.py
+
         - task_key: load_zinc
           notebook_task:
-            notebook_path: "./notebooks/1_Load Zinc15_250K and descriptors.py"
-        - task_key: vs
+            notebook_path: ./notebooks/1_Load Zinc15_250K and descriptors.py
+
+        - task_key: create_vector_search
           depends_on:
             - task_key: load_zinc
           notebook_task:
-            notebook_path: "./notebooks/2_create VS zinc15.py"
+            notebook_path: ./notebooks/2_create VS zinc15.ipynb
 
-# For more options and schema, see: https://docs.databricks.com/aws/en/dev-tools/bundles/settings
+        - task_key: create_drugbank_genie
+          depends_on:
+            - task_key: load_drugbank
+          notebook_task:
+            notebook_path: ./notebooks/2_create_Drugbank_genie.py
+
+        - task_key: connect_opentarget_mcp
+          notebook_task:
+            notebook_path: ./notebooks/4_connect_ext_mcp_opentarget.py
+        
+        - task_key: connect_pubchem_mcp
+          notebook_task:
+            notebook_path: ./notebooks/4_connect_ext_mcp_pubchem.py
+
+        - task_key: connect_pubmed_mcp
+          notebook_task:
+            notebook_path: ./notebooks/4_connect_ext_mcp_pubmed.py  

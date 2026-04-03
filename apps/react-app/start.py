@@ -57,15 +57,16 @@ def main():
     AGENT_PORT = os.environ.get("AGENT_PORT", "8080")
     print(f"Starting agent server on port {AGENT_PORT}...")
     agent_proc = subprocess.Popen(
-        [sys.executable, "agent/start_server.py", "--port", AGENT_PORT],
+        [sys.executable, "-u", "agent/start_server.py", "--port", AGENT_PORT],
         cwd=APP_ROOT,
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    # Show agent stderr in this terminal (e.g. "Failed to build agent" + traceback)
-    t = threading.Thread(target=_tee_stderr, args=(agent_proc.stderr, "[agent] "), daemon=True)
-    t.start()
+    # Show agent stdout + stderr in this terminal with [agent] prefix
+    for pipe in (agent_proc.stdout, agent_proc.stderr):
+        t = threading.Thread(target=_tee_stderr, args=(pipe, "[agent] "), daemon=True)
+        t.start()
     print(f"Agent started (PID: {agent_proc.pid})")
 
     time.sleep(2)
