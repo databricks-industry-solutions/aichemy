@@ -9,15 +9,21 @@ import mlflow
 import os
 from starlette.responses import JSONResponse
 from starlette.routing import Route
+from opentelemetry import trace
 
 
 _app_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_app_root))
 
-from agent.utils import init_mlflow, load_env_from_app_yaml
+from agent.utils import init_mlflow, load_env_from_app_yaml, SanitizeNullAttributesProcessor
 
 load_env_from_app_yaml()
 init_mlflow()
+
+# Register with the global Otel TracerProvider before mlflow logging
+provider = trace.get_tracer_provider()
+if hasattr(provider, "add_span_processor"):
+    provider.add_span_processor(SanitizeNullAttributesProcessor())
 mlflow.langchain.autolog()
 
 # Import agent to register @invoke / @stream with the server
