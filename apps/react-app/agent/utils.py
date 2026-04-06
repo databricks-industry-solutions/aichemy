@@ -416,13 +416,11 @@ def wrap_mcp_tools_with_resilience(tools, max_concurrent=2, call_delay=1.0):
 
         tool.coroutine = _wrapped
     return tools
-
-
-from opentelemetry import trace
-from opentelemetry.sdk.trace import SpanProcessor, ReadableSpan
+    
 
 class SanitizeNullAttributesProcessor(SpanProcessor):
     """Remove None-valued attributes that would fail OTLP encoding."""
+    from opentelemetry.sdk.trace import SpanProcessor, ReadableSpan
 
     def on_end(self, span: ReadableSpan) -> None:
         if not hasattr(span, "_attributes") or span._attributes is None:
@@ -432,8 +430,3 @@ class SanitizeNullAttributesProcessor(SpanProcessor):
         ]
         for k in keys_to_remove:
             del span._attributes[k]
-
-# Register with the global TracerProvider
-provider = trace.get_tracer_provider()
-if hasattr(provider, "add_span_processor"):
-    provider.add_span_processor(SanitizeNullAttributesProcessor())
