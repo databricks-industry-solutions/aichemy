@@ -1,9 +1,12 @@
 command:
+  - opentelemetry-instrument
   - uv
   - run
   - start.py
 
 env:
+  - name: OTEL_TRACES_SAMPLER
+    value: 'always_on'
   - name: AGENT_PORT
     value: 8080
   - name: AGENT_CONNECT_TIMEOUT
