@@ -13,6 +13,9 @@ langchain-core>=1.2.7
 langgraph-supervisor
 mcp>=1.22.0
 openai==2.14.0
+opentelemetry-distro
+opentelemetry-exporter-otlp-proto-grpc
+opentelemetry-instrumentation-fastapi
 pydantic>=2.0.0
 PyYAML>=6.0
 psycopg[binary]>=3.1.0
