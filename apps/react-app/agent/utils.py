@@ -10,6 +10,7 @@ from mlflow.types.responses import ResponsesAgentRequest
 from uuid import uuid4
 import asyncio
 import logging
+from opentelemetry.sdk.trace import SpanProcessor, ReadableSpan
 
 logger = logging.getLogger(__name__)
 
@@ -416,3 +417,16 @@ def wrap_mcp_tools_with_resilience(tools, max_concurrent=2, call_delay=1.0):
 
         tool.coroutine = _wrapped
     return tools
+    
+
+class SanitizeNullAttributesProcessor(SpanProcessor):
+    """Remove None-valued attributes that would fail OTLP encoding."""
+
+    def on_end(self, span: ReadableSpan) -> None:
+        if not hasattr(span, "_attributes") or span._attributes is None:
+            return
+        keys_to_remove = [
+            k for k, v in span._attributes.items() if v is None
+        ]
+        for k in keys_to_remove:
+            del span._attributes[k]
