@@ -188,7 +188,7 @@ pydantic==2.12.5
 pydantic-settings==2.13.1
 pydantic_core==2.41.5
 pyflakes==3.1.0
-Pygments==2.11.2
+Pygments==2.20.0
 PyGObject==3.42.1
 PyJWT==2.11.0
 pyodbc==4.0.32
