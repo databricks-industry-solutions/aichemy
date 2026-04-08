@@ -138,7 +138,7 @@ mccabe==0.7.0
 mcp==1.26.0
 mdurl==0.1.2
 mistune==0.8.4
-mlflow==3.9.0
+mlflow==3.11.0rc1
 mlflow-skinny==3.9.0
 mlflow-tracing==3.9.0
 more-itertools==8.10.0
