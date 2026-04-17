@@ -109,7 +109,7 @@ langchain-classic==1.0.1
 langchain-community==0.4.1
 langchain-core==1.2.17
 langchain-mcp-adapters==0.1.14
-langchain-text-splitters==1.1.1
+langchain-text-splitters==1.1.2
 langgraph==1.0.10
 langgraph-checkpoint==4.0.1
 langgraph-checkpoint-postgres==3.0.4
