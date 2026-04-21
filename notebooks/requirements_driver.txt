@@ -206,7 +206,7 @@ pyright==1.1.294
 pyrsistent==0.18.0
 python-apt==2.4.0+ubuntu4.1
 python-dateutil==2.8.2
-python-dotenv==1.2.1
+python-dotenv==1.2.2
 python-lsp-jsonrpc==1.1.1
 python-lsp-server==1.8.0
 python-multipart==0.0.22
