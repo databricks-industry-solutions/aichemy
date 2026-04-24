@@ -3,6 +3,7 @@ import os
 import time
 from databricks.sdk import WorkspaceClient
 from base64 import b64decode
+from databricks_mcp import mcp
 import mlflow
 import yaml
 import threading
@@ -183,9 +184,16 @@ def _log_exception_group(exc: BaseException, server_names: str = "") -> None:
 def build_mcp_list(cfg, ws_client=None):
     """Build a list of MCP server objects from config.yml sections.
 
-    Reads ``uc_connections`` (-> DatabricksMCPServer via the workspace proxy)
-    and ``external_mcp`` (-> MCPServer with direct URLs).  Glama.ai endpoints
-    get an Authorization header automatically via ``get_secret``.
+    Reads three config sections:
+
+    * ``uc_connections``  -> DatabricksMCPServer via the workspace UC proxy
+    * ``external_mcp``    -> MCPServer with direct URLs (e.g. Glama.ai)
+    * ``custom_mcp``      -> DatabricksMCPServer for custom MCP servers hosted
+      as Databricks Apps (see https://docs.databricks.com/aws/en/generative-ai/mcp/custom-mcp).
+      Each entry requires a ``url`` (the app's ``/mcp`` endpoint).  When
+      ``scope`` / ``client_id_key`` / ``client_secret_key`` are provided the
+      server authenticates with a dedicated service-principal via OAuth M2M;
+      otherwise the default *ws_client* is reused.
 
     Returns a list suitable for ``DatabricksMultiServerMCPClient(mcp_list)``.
     """
@@ -194,6 +202,18 @@ def build_mcp_list(cfg, ws_client=None):
     servers = []
     host = cfg.get("host", "").rstrip("/") + "/"
 
+    # --- External (non-Databricks) MCP servers ---
+    for name, mcp_cfg in cfg.get("external_mcp", {}).items():
+        url = mcp_cfg["url"]
+        kwargs = dict(name=name, url=url, timeout=60, terminate_on_close=False)
+        if "secret" in mcp_cfg:
+            kwargs["headers"] = {
+                "Authorization": f"Bearer {get_secret(scope=mcp_cfg.get('scope'), key=mcp_cfg.get('secret'))}"
+            }
+            print(f"Getting bearer token from scope {mcp_cfg.get('scope')} and secret {mcp_cfg.get('secret')}")
+        servers.append(MCPServer(**kwargs))
+
+    # --- UC connection proxy servers ---
     for name, conn_name in cfg.get("uc_connections", {}).items():
         if ws_client is None:
             logger.warning(
@@ -211,15 +231,38 @@ def build_mcp_list(cfg, ws_client=None):
             )
         )
 
-    for name, mcp_cfg in cfg.get("external_mcp", {}).items():
-        url = mcp_cfg["url"]
-        kwargs = dict(name=name, url=url, timeout=60, terminate_on_close=False)
-        if "secret" in mcp_cfg:
-            kwargs["headers"] = {
-                "Authorization": f"Bearer {get_secret(scope=mcp_cfg.get('scope'), key=mcp_cfg.get('secret'))}"
-            }
-            print(f"Getting bearer token from scope {mcp_cfg.get('scope')} and secret {mcp_cfg.get('secret')}")
-        servers.append(MCPServer(**kwargs))
+    # --- Custom MCP servers hosted as Databricks Apps ---
+    # Auth priority: profile > SP credentials (scope) > default ws_client.
+    # Use ``profile`` for local dev (U2M OAuth, like ``databricks auth login``).
+    # Use ``scope``/``client_id``/``secret`` for deployed SP M2M auth.
+    for name, mcp_cfg in cfg.get("custom_mcp", {}).items():
+        if "scope" in mcp_cfg:
+            mcp_client_id = get_secret(
+                scope=mcp_cfg["scope"], key=mcp_cfg["client_id"]
+            )
+            mcp_client_secret = get_secret(
+                scope=mcp_cfg["scope"], key=mcp_cfg["secret"]
+            )
+            custom_ws = WorkspaceClient(
+                host=mcp_cfg.get("host") or cfg.get("host"),
+                client_id=mcp_client_id,
+                client_secret=mcp_client_secret,
+                auth_type="oauth-m2m"
+            )
+            logger.info("Custom MCP '%s' using OAuth", name)
+        else:
+            custom_ws = ws_client or WorkspaceClient()
+            logger.info("Custom MCP '%s' using default workspace client", name)
+
+        servers.append(
+            DatabricksMCPServer(
+                name=name,
+                url=mcp_cfg["url"],
+                workspace_client=custom_ws,
+                timeout=60,
+                terminate_on_close=False,
+            )
+        )
 
     return servers
 

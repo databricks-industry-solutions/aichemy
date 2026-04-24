@@ -18,10 +18,6 @@ The Guided Tasks panel provides necessary prompts and agent Skills to perform th
 Say we want to discover a follow up to Elacestrant, the first oral SERM approved in 2023. We can look up a large chemical library like the ZINC15 database for drug-like molecules structurally similar to Elacestrant and thus are likely to share similar properties according to Quantitative Structure Activity Relationship (QSAR) principles. We can query Databricks Vector Search which stores the 1024-bit Extended-Connectivity Fingerprint (ECFP) molecular embeddings of all 250,000 molecules in ZINC using Elacestrant ECFP embedding as the query string.
 <img width="1671" height="853" alt="elacestrant_sim" src="https://github.com/user-attachments/assets/8dc0a67e-babe-47d3-8bc7-8d69763679f2" />
 
-
-![screenshot](img/ssupervisor_screenshot.png)
-
-
 ## Setup
 ### 1. Installation
 ```

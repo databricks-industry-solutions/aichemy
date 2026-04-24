@@ -427,24 +427,76 @@ def extract_user_request(prompt: str) -> str:
 # External MCP server health checks
 # ---------------------------------------------------------------------------
 
-_MCP_SERVERS: Optional[dict[str, str]] = None
+_MCP_SERVERS: Optional[dict[str, dict]] = None
 
 
-def get_mcp_servers() -> dict[str, str]:
-    """Load external MCP server URLs from config.yml (cached)."""
+def get_mcp_servers() -> dict[str, dict]:
+    """Load all MCP server URLs and auth metadata from config.yml (cached).
+
+    Reads three config sections:
+      * ``external_mcp``   – third-party servers with bearer-token auth
+      * ``custom_mcp``     – Databricks Apps with OAuth M2M auth
+      * ``uc_connections`` – Unity Catalog connection proxy via workspace auth
+    """
     global _MCP_SERVERS
     if _MCP_SERVERS is None:
         cfg = load_config()
-        flat: dict[str, str] = {}
-        for name, mcp_cfg in (cfg.get("external_mcp", {})).items():
-            flat[name] = mcp_cfg["url"]
+        flat: dict[str, dict] = {}
+
+        for name, mcp_cfg in cfg.get("external_mcp", {}).items():
+            flat[name] = {"url": mcp_cfg["url"], "type": "external"}
+
+        for name, mcp_cfg in cfg.get("custom_mcp", {}).items():
+            flat[name] = {"url": mcp_cfg["url"], "type": "custom"}
+
+        host = cfg.get("host", "").rstrip("/") + "/"
+        for name, conn_name in cfg.get("uc_connections", {}).items():
+            flat[name] = {
+                "url": f"{host}api/2.0/mcp/external/{conn_name}",
+                "type": "uc_connection",
+            }
+
         _MCP_SERVERS = flat
     return _MCP_SERVERS
 
 
-def check_mcp_server(name: str, url: str, timeout: float = 5.0) -> dict:
-    """Ping an MCP server with a JSON-RPC initialize request."""
+def _databricks_auth_headers(cfg: dict, server_type: str, name: str) -> dict[str, str]:
+    """Build Authorization headers for Databricks-authenticated MCP servers."""
+    from databricks.sdk import WorkspaceClient
+
+    if server_type == "custom":
+        mcp_cfg = cfg.get("custom_mcp", {}).get(name, {})
+        if "scope" in mcp_cfg:
+            client_id = get_secret(scope=mcp_cfg["scope"], key=mcp_cfg["client_id"])
+            client_secret = get_secret(scope=mcp_cfg["scope"], key=mcp_cfg["secret"])
+            ws = WorkspaceClient(
+                host=mcp_cfg.get("host") or cfg.get("host"),
+                client_id=client_id,
+                client_secret=client_secret,
+                auth_type="oauth-m2m",
+            )
+        else:
+            ws = WorkspaceClient()
+    else:
+        ws = WorkspaceClient()
+
+    # headers: dict[str, str] = {}
+    # ws.config.authenticate(headers)
+    # return headers
+    return ws.config.authenticate()
+
+def check_mcp_server(name: str, server_info: dict, timeout: float = 5.0) -> dict:
+    """Ping an MCP server with a JSON-RPC initialize request.
+
+    Handles three auth modes:
+      * external  – bearer token from Databricks secrets
+      * custom    – Databricks OAuth M2M via WorkspaceClient
+      * uc_connection – default workspace OAuth via WorkspaceClient
+    """
     cfg = load_config()
+    url = server_info["url"]
+    server_type = server_info["type"]
+
     mcp_init = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -459,10 +511,17 @@ def check_mcp_server(name: str, url: str, timeout: float = 5.0) -> dict:
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
-    secret = cfg.get("external_mcp", {}).get(name, {}).get("secret")
-    if secret:
-        scope = cfg["external_mcp"].get(name, {}).get("scope")
-        headers["Authorization"] = f"Bearer {get_secret(scope=scope, key=secret)}"
+
+    if server_type == "external":
+        secret = cfg.get("external_mcp", {}).get(name, {}).get("secret")
+        if secret:
+            scope = cfg["external_mcp"].get(name, {}).get("scope")
+            headers["Authorization"] = f"Bearer {get_secret(scope=scope, key=secret)}"
+    elif server_type in ("custom", "uc_connection"):
+        try:
+            headers.update(_databricks_auth_headers(cfg, server_type, name))
+        except Exception as e:
+            return {"name": name, "url": url, "ok": False, "error": f"auth_failed: {e}"}
 
     try:
         resp = requests.post(url, json=mcp_init, headers=headers, timeout=timeout)
@@ -481,7 +540,7 @@ def check_mcp_server(name: str, url: str, timeout: float = 5.0) -> dict:
 
 
 async def check_all_mcp_servers() -> list[dict]:
-    """Check reachability of all configured external MCP servers in parallel."""
+    """Check reachability of all configured MCP servers in parallel."""
     from concurrent.futures import ThreadPoolExecutor
 
     servers = get_mcp_servers()
@@ -491,7 +550,7 @@ async def check_all_mcp_servers() -> list[dict]:
     loop = asyncio.get_running_loop()
     with ThreadPoolExecutor(max_workers=len(servers)) as pool:
         futures = [
-            loop.run_in_executor(pool, check_mcp_server, name, url)
-            for name, url in servers.items()
+            loop.run_in_executor(pool, check_mcp_server, name, info)
+            for name, info in servers.items()
         ]
         return list(await asyncio.gather(*futures))

@@ -29,8 +29,15 @@ external_mcp:
     url: https://glama.ai/endpoints/mp1ke6xrpi/mcp
     scope: aichemy
     secret: pubmed_glama_api
-  opentargets: 
-    url: https://mcp.platform.opentargets.org/mcp
+  # opentargets: 
+  #   url: https://mcp.platform.opentargets.org/mcp
+custom_mcp:
+  opentargets:
+    url: https://mpc-opentargets-1602460480284688.aws.databricksapps.com/mcp
+    host: https://fe-vm-hls-amer.cloud.databricks.com/
+    scope: aichemy
+    client_id: mcp_client_id
+    secret: mcp_client_secret
 retriever:
   zinc_molecular_search:
     vs_endpoint: dbdemos_vs_endpoint
@@ -70,6 +77,8 @@ prompts:
     You are a multi-MCP server agent connected to:
     1. PubChem MCP server that provides everything about chemical compounds
     2. PubMed MCP server that searches biomedical literature and retrieves free full text if any.
+    3. OpenTargets MCP server that queries the Open Targets Platform for target-disease associations,
+    drug mechanisms, genetic evidence, and more via GraphQL.
     Most PubChem tools (e.g. get_compound_info) except for search_compounds expect a CID.
   memory: >-
     You save and delete long-term user memories. Save when the user explicitly
@@ -90,7 +99,7 @@ prompts:
     given SMILES structure. If missing SMILES input, query it from a chemical name using the
     PubChem MCP agent's search_compound tool.
 
-    4. MCP agent: connects to the PubChem and PubMed MCP servers
+    4. MCP agent: connects to the PubChem, PubMed, and OpenTargets MCP servers
 
     5. Memory agent: saves or deletes long-term user memories. ONLY route here when the user
     explicitly asks to "remember", "store", "note that", "from now on", "forget", or "delete memory".
