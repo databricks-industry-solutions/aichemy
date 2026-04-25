@@ -521,27 +521,30 @@ def check_mcp_server(name: str, server_info: dict, timeout: float = 5.0) -> dict
         try:
             headers.update(_databricks_auth_headers(cfg, server_type, name))
         except Exception as e:
-            return {"name": name, "url": url, "ok": False, "error": f"auth_failed: {e}"}
+            return {"name": name, "url": url, "ok": False, "status": "error", "error": f"auth_failed: {e}"}
 
     try:
         resp = requests.post(url, json=mcp_init, headers=headers, timeout=timeout)
         if resp.status_code < 400:
-            return {"name": name, "url": url, "ok": True, "status_code": resp.status_code}
+            return {"name": name, "url": url, "ok": True, "status": "connected", "status_code": resp.status_code}
         # Databricks App MCP servers return 403 for simple POSTs because they
         # require the full DatabricksMCPServer OAuth handshake.  Any HTTP
         # response proves the server is alive; the agent client handles auth.
         if server_type in ("custom", "uc_connection"):
-            return {"name": name, "url": url, "ok": True, "status_code": resp.status_code}
+            return {
+                "name": name, "url": url, "ok": True, "status": "reachable",
+                "status_code": resp.status_code, "detail": resp.reason,
+            }
         return {
-            "name": name, "url": url, "ok": False,
+            "name": name, "url": url, "ok": False, "status": "error",
             "status_code": resp.status_code, "error": resp.reason,
         }
     except requests.exceptions.ConnectionError:
-        return {"name": name, "url": url, "ok": False, "error": "connection_refused"}
+        return {"name": name, "url": url, "ok": False, "status": "error", "error": "connection_refused"}
     except requests.exceptions.Timeout:
-        return {"name": name, "url": url, "ok": False, "error": "timeout"}
+        return {"name": name, "url": url, "ok": False, "status": "error", "error": "timeout"}
     except Exception as e:
-        return {"name": name, "url": url, "ok": False, "error": str(e)}
+        return {"name": name, "url": url, "ok": False, "status": "error", "error": str(e)}
 
 
 async def check_all_mcp_servers() -> list[dict]:

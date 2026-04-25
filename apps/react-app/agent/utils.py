@@ -80,24 +80,32 @@ def get_secret_from_cfg(cfg) -> tuple[str | None, str | None]:
     return client_id, client_secret
 
 
-def init_workspace_client(cfg):
-    # SP login takes precedence over PAT/profile login (for Lakebase writes)
-    client_id, client_secret = get_secret_from_cfg(cfg)
-    if client_id and client_secret:
-        try:
-            ws_client = WorkspaceClient(
-                host=cfg["host"], client_id=client_id, client_secret=client_secret
-            )
-            print(f"Workspace client initialized with SP: {client_id}")
-        except Exception as e:
-            print(
-                f"Error initializing workspace client with SP. Using WorkspaceClient() instead: {e}"
-            )
-            ws_client = WorkspaceClient()
+def init_workspace_client(cfg, SP=False):
+    if not SP:
+        profile = os.environ.get("DATABRICKS_PROFILE")
+        if profile:
+            return WorkspaceClient(profile=profile)
+        else:
+            # Running inside Databricks Apps — use default SDK auth
+            return WorkspaceClient()
     else:
-        logger.warning("Service Principal credentials not in config.yml. Defaulting to WorkspaceClient()")
-        ws_client = WorkspaceClient()
-    return ws_client
+        client_id, client_secret = get_secret_from_cfg(cfg)
+        if client_id and client_secret:
+            try:
+                print(f"Workspace client initialized with SP: {client_id}")
+                return WorkspaceClient(
+                    host=cfg["host"], 
+                    client_id=client_id, 
+                    client_secret=client_secret
+                )
+            except Exception as e:
+                print(
+                    f"Error initializing workspace client with SP. Using WorkspaceClient() instead: {e}"
+                )
+                return WorkspaceClient()
+        else:
+            logger.warning("Service Principal credentials not in config.yml. Defaulting to WorkspaceClient()")
+            return WorkspaceClient()
 
 
 def get_trace(trace_id: str, retries: int = 5, delay: float = 2.0):
@@ -180,7 +188,7 @@ def _log_exception_group(exc: BaseException, server_names: str = "") -> None:
         logger.error("  %sMCP root cause: %s: %s", prefix, type(exc).__name__, exc)
 
 
-def build_mcp_list(cfg, ws_client=None):
+def build_mcp_list(cfg, ws_client=WorkspaceClient()):
     """Build a list of MCP server objects from config.yml sections.
 
     Reads three config sections:
@@ -189,11 +197,7 @@ def build_mcp_list(cfg, ws_client=None):
     * ``external_mcp``    -> MCPServer with direct URLs (e.g. Glama.ai)
     * ``custom_mcp``      -> DatabricksMCPServer for custom MCP servers hosted
       as Databricks Apps (see https://docs.databricks.com/aws/en/generative-ai/mcp/custom-mcp).
-      Each entry requires a ``url`` (the app's ``/mcp`` endpoint).  When
-      ``scope`` / ``client_id_key`` / ``client_secret_key`` are provided the
-      server authenticates with a dedicated service-principal via OAuth M2M;
-      otherwise the default *ws_client* is reused.
-
+      Each entry requires a ``url`` (the app's ``/mcp`` endpoint). 
     Returns a list suitable for ``DatabricksMultiServerMCPClient(mcp_list)``.
     """
     from databricks_langchain import DatabricksMCPServer, MCPServer
@@ -214,12 +218,6 @@ def build_mcp_list(cfg, ws_client=None):
 
     # --- UC connection proxy servers ---
     for name, conn_name in cfg.get("uc_connections", {}).items():
-        if ws_client is None:
-            logger.warning(
-                "ws_client is None, using WorkspaceClient() instead for %s", name
-            )
-            ws_client = WorkspaceClient()
-
         servers.append(
             DatabricksMCPServer(
                 name=name,
@@ -235,31 +233,21 @@ def build_mcp_list(cfg, ws_client=None):
     # Use ``profile`` for local dev (U2M OAuth, like ``databricks auth login``).
     # Use ``scope``/``client_id``/``secret`` for deployed SP M2M auth.
     for name, mcp_cfg in cfg.get("custom_mcp", {}).items():
-        if "scope" in mcp_cfg:
-            mcp_client_id = get_secret(
-                scope=mcp_cfg["scope"], key=mcp_cfg["client_id"]
-            )
-            mcp_client_secret = get_secret(
-                scope=mcp_cfg["scope"], key=mcp_cfg["secret"]
-            )
-            custom_ws = WorkspaceClient(
-                host=mcp_cfg.get("host") or cfg.get("host"),
-                client_id=mcp_client_id,
-                client_secret=mcp_client_secret,
-                auth_type="oauth-m2m"
-            )
-            logger.info("Custom MCP '%s' using OAuth", name)
-        else:
-            custom_ws = ws_client or WorkspaceClient()
-            logger.info("Custom MCP '%s' using default workspace client", name)
+        # client_id, client_secret = get_secret_from_cfg(cfg)
+
+        custom_ws = WorkspaceClient(
+            # host=host,
+            # client_id=client_id,
+            # client_secret=client_secret,
+            # auth_type="oauth-m2m"
+        )
+        logger.info("Custom MCP '%s' using OAuth", name)
 
         servers.append(
             DatabricksMCPServer(
                 name=name,
                 url=mcp_cfg["url"],
-                workspace_client=custom_ws,
-                timeout=60,
-                terminate_on_close=False,
+                workspace_client=custom_ws
             )
         )
 

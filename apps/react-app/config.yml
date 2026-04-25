@@ -33,11 +33,7 @@ external_mcp:
   #   url: https://mcp.platform.opentargets.org/mcp
 custom_mcp:
   opentargets:
-    url: https://mpc-opentargets-1602460480284688.aws.databricksapps.com/mcp
-    host: https://fe-vm-hls-amer.cloud.databricks.com/
-    scope: aichemy
-    client_id: mcp_client_id
-    secret: mcp_client_secret
+    url: https://opentargets-mcp-2556758628403379.aws.databricksapps.com/mcp
 retriever:
   zinc_molecular_search:
     vs_endpoint: dbdemos_vs_endpoint

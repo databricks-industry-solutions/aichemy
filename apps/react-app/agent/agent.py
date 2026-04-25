@@ -57,9 +57,6 @@ from agent.utils_memory import memory_write_tools
 with open(_app_root / "config.yml") as _f:
     _cfg = yaml.safe_load(_f)
 
-# Based on SP
-ws_client = init_workspace_client(_cfg)
-
 _KEEPALIVE_IDLE_SECS = int(os.environ.get("AGENT_KEEPALIVE_SECS", 600))
 
 # ---------------------------------------------------------------------------
@@ -83,7 +80,7 @@ _last_activity = time.monotonic()
 _last_activity_lock = threading.Lock()
 
 
-def _build_agent() -> StateGraph:
+def _build_agent(cfg: dict) -> StateGraph:
     """Instantiate the full multi-agent supervisor workflow (uncompiled StateGraph)."""
     # import nest_asyncio
     # nest_asyncio.apply()
@@ -102,29 +99,31 @@ def _build_agent() -> StateGraph:
     from langchain.tools import tool
     from langgraph_supervisor import create_supervisor
 
-    llm = ChatDatabricks(endpoint=_cfg["llm_endpoint"])
+    ws_client = init_workspace_client(cfg)
+
+    llm = ChatDatabricks(endpoint=cfg["llm_endpoint"])
 
     # --- Utility functions agent ---
     function_agents = []
-    for agent_name, functions in _cfg["uc_functions"].items():
+    for agent_name, functions in cfg["uc_functions"].items():
         tools = UCFunctionToolkit(function_names=functions).tools
         function_agent = create_agent(
             llm,
             tools=tools,
-            system_prompt=_cfg["prompts"][agent_name],
+            system_prompt=cfg["prompts"][agent_name],
             name=agent_name,
         )
         function_agents.append(function_agent)
 
     # --- DrugBank Genie agent ---
     genie_agents = []
-    for agent_name, genie_config in _cfg["genie"].items():
+    for agent_name, genie_config in cfg["genie"].items():
         genie_agent = GenieAgent(genie_config["space_id"], genie_agent_name=agent_name)
         genie_agents.append(genie_agent)
 
     # --- ZINC vector search agent ---
     retriever_agents = []
-    for agent_name, retriever_config in _cfg["retriever"].items():
+    for agent_name, retriever_config in cfg["retriever"].items():
         retriever_tool = VectorSearchRetrieverTool(
             index_name=retriever_config["vs_index"],
             num_results=retriever_config["k"],
@@ -133,7 +132,7 @@ def _build_agent() -> StateGraph:
             tool_name=agent_name,
             tool_description=retriever_config["tool_description"],
             embedding=DatabricksEmbeddings(endpoint=retriever_config["embedding"]),
-            workspace_client=ws_client,
+            workspace_client=init_workspace_client(cfg, SP=True),
         )
 
         if retriever_config["search_type"] == "vector":
@@ -158,13 +157,13 @@ def _build_agent() -> StateGraph:
         retreiver_agent = create_agent(
             llm,
             tools=[tool_vectorinput],
-            system_prompt=_cfg["prompts"][agent_name],
+            system_prompt=cfg["prompts"][agent_name],
             name=agent_name,
         )
         retriever_agents.append(retreiver_agent)
 
     # --- MCP agents (PubChem / PubMed / OpenTargets) ---
-    servers = build_mcp_list(_cfg, ws_client=ws_client)
+    servers = build_mcp_list(cfg, ws_client=ws_client)
 
     global mcp_client
     mcp_client = DatabricksMultiServerMCPClient(servers)
@@ -183,25 +182,25 @@ def _build_agent() -> StateGraph:
     
     mcp_tools = wrap_mcp_tools_with_resilience(mcp_tools)
     mcp_agent = create_agent(
-        llm, tools=mcp_tools, system_prompt=_cfg["prompts"]["mcp"], name="mcp"
+        llm, tools=mcp_tools, system_prompt=cfg["prompts"]["mcp"], name="mcp"
     )
 
     # --- Memory agent (save/delete only — retrieval is auto-injected) ---
     mem_agent = create_agent(
         llm,
         tools=memory_write_tools(),
-        system_prompt=_cfg["prompts"]["memory"],
+        system_prompt=cfg["prompts"]["memory"],
         name="memory",
     )
 
     global _agent_tools
-    _agent_tools = _collect_tool_metadata(mcp_tools, _cfg)
+    _agent_tools = _collect_tool_metadata(mcp_tools, cfg)
 
     # --- Supervisor ---
     workflow = create_supervisor(
         [mcp_agent, mem_agent] + function_agents + genie_agents + retriever_agents,
         model=llm,
-        prompt=_cfg["prompts"]["supervisor"],
+        prompt=cfg["prompts"]["supervisor"],
         output_mode="last_message",
         add_handoff_messages=False,
         parallel_tool_calls=True,
@@ -209,17 +208,17 @@ def _build_agent() -> StateGraph:
     return workflow
 
 
-def build_responses_agent(workflow: Optional[StateGraph] = None) -> WrappedAgent:
+def build_responses_agent(cfg: dict, workflow: Optional[StateGraph] = None) -> WrappedAgent:
     """Wrap a LangGraph workflow in a WrappedAgent (ResponsesAgent).
 
     If *workflow* is None, calls _build_agent() to create one.
     """
     if workflow is None:
-        workflow = _build_agent()
+        workflow = _build_agent(cfg)
     return WrappedAgent(
         workflow=workflow,
-        workspace_client=ws_client,  #use SP-based ws_client for Lakebase writes
-        cfg=_cfg
+        workspace_client=init_workspace_client(cfg, SP=True),  #use SP-based ws_client for Lakebase writes
+        cfg=cfg
     )
 
 
@@ -227,8 +226,8 @@ def launch_agent_background():
     global _agent, _workflow, _agent_build_error
     try:
         logger.info("Building agent…")
-        _workflow = _build_agent()
-        _agent = build_responses_agent(_workflow)
+        _workflow = _build_agent(_cfg)
+        _agent = build_responses_agent(_cfg, _workflow)
         logger.info("Agent ready.")
         # _warmup(_agent)
     except Exception as exc:
