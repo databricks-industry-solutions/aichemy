@@ -3,7 +3,6 @@ import os
 import time
 from databricks.sdk import WorkspaceClient
 from base64 import b64decode
-from databricks_mcp import mcp
 import mlflow
 import yaml
 import threading
