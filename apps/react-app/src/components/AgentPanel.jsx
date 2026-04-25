@@ -100,6 +100,9 @@ export default function AgentPanel({
           )
         })}
       </div>
+      {Object.values(mcpStatus).some((srv) => !srv || !srv.ok || srv.status === 'reachable') && (
+        <div className="status-info">MCP is down if not green. Hit Reboot or avoid using that MCP.</div>
+      )}
       <div className="agent-divider" />
 
       <div className="agent-activity-scroll">
