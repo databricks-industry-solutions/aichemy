@@ -527,9 +527,14 @@ def check_mcp_server(name: str, server_info: dict, timeout: float = 5.0) -> dict
         resp = requests.post(url, json=mcp_init, headers=headers, timeout=timeout)
         if resp.status_code < 400:
             return {"name": name, "url": url, "ok": True, "status_code": resp.status_code}
+        # Databricks App MCP servers return 403 for simple POSTs because they
+        # require the full DatabricksMCPServer OAuth handshake.  Any HTTP
+        # response proves the server is alive; the agent client handles auth.
+        if server_type in ("custom", "uc_connection"):
+            return {"name": name, "url": url, "ok": True, "status_code": resp.status_code}
         return {
-            "name": name, "url": url, "ok": True, "status": "reachable",
-            "status_code": resp.status_code, "detail": resp.reason,
+            "name": name, "url": url, "ok": False,
+            "status_code": resp.status_code, "error": resp.reason,
         }
     except requests.exceptions.ConnectionError:
         return {"name": name, "url": url, "ok": False, "error": "connection_refused"}
