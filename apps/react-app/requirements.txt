@@ -10,7 +10,10 @@ langchain-mcp-adapters==0.1.14
 # https://github.com/langchain-ai/langchain-mcp-adapters/issues/397
 databricks-sdk
 langchain-core>=1.2.7
-langgraph-supervisor
+# https://github.com/langchain-ai/langgraph/issues/7404
+langgraph==1.1.9
+langgraph-prebuilt==1.0.8
+langgraph-supervisor==0.0.31
 mcp>=1.22.0
 openai==2.14.0
 pydantic>=2.0.0
