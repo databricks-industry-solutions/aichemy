@@ -128,7 +128,7 @@ matplotlib==3.7.0
 matplotlib-inline==0.1.6
 mccabe==0.7.0
 mcp==1.26.0
-mistune==0.8.4
+mistune==3.2.1
 mlflow==3.10.0
 mlflow-skinny==3.10.0
 mlflow-tracing==3.10.0
