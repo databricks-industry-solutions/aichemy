@@ -267,7 +267,7 @@ unitycatalog-ai==0.3.2
 unitycatalog-client==0.4.0
 unitycatalog-langchain==0.3.0
 unitycatalog-openai==0.2.0
-urllib3==2.6.3
+urllib3==2.7.0
 uuid_utils==0.14.0
 uv==0.10.4
 uvicorn==0.40.0
