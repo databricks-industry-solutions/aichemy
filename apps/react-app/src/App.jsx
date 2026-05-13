@@ -8,6 +8,9 @@ import {
   fetchUserInfo,
   fetchDbStatus,
   fetchMcpStatus,
+  fetchAgentConfig,
+  fetchAgentStatus,
+  rebuildAgent,
   listProjects,
   createProject,
   loadProject,
@@ -71,6 +74,49 @@ export default function App() {
   const [selectedWorkflow, setSelectedWorkflow] = useState(null)
   const [skillsEnabled, setSkillsEnabled] = useState(false)
 
+  // Agent config (populated from backend on mount)
+  const [agentConfig, setAgentConfig] = useState({ mcp_servers: [], llm_endpoint: '' })
+  const [selectedModel, setSelectedModel] = useState('')
+  const [isRebuilding, setIsRebuilding] = useState(false)
+
+  // MCP enable/disable state — keyed by server name, persisted to localStorage
+  const [enabledGroups, setEnabledGroups] = useState(() => {
+    try {
+      const stored = localStorage.getItem('aichemy_enabled_groups')
+      return stored ? JSON.parse(stored) : {}
+    } catch {
+      return {}
+    }
+  })
+
+  const handleToggleGroup = useCallback((key, enabled) => {
+    setEnabledGroups(prev => {
+      const next = { ...prev, [key]: enabled }
+      localStorage.setItem('aichemy_enabled_groups', JSON.stringify(next))
+      return next
+    })
+  }, [])
+
+  const handleRebuildAgent = useCallback(async () => {
+    setIsRebuilding(true)
+    const enabledMcps = (agentConfig.mcp_servers || []).filter(
+      srv => enabledGroups[srv] !== false
+    )
+    await rebuildAgent({ llmEndpoint: selectedModel || undefined, enabledMcps })
+    // Poll until the agent signals ready or error
+    let attempts = 0
+    while (attempts < 90) {
+      await new Promise(r => setTimeout(r, 2000))
+      try {
+        const status = await fetchAgentStatus()
+        if (status.ready) break
+        if (status.ready === false && status.building === false) break // error state
+      } catch { /* ignore transient failures */ }
+      attempts++
+    }
+    setIsRebuilding(false)
+  }, [agentConfig.mcp_servers, enabledGroups, selectedModel])
+
   // User identity (fetched from backend on mount)
   const [userInfo, setUserInfo] = useState({ user_id: null, user_name: '', user_email: '' })
 
@@ -97,10 +143,22 @@ export default function App() {
   useEffect(() => {
     async function init() {
       try {
-        const [user, status, mcp] = await Promise.all([fetchUserInfo(), fetchDbStatus(), fetchMcpStatus()])
+        const [user, status, mcp, cfg] = await Promise.all([
+          fetchUserInfo(), fetchDbStatus(), fetchMcpStatus(), fetchAgentConfig(),
+        ])
         setUserInfo(user)
         setDbStatus(status)
         setMcpStatus(mcp)
+        setAgentConfig(cfg)
+        setSelectedModel(cfg.llm_endpoint || '')
+        // Seed enabledGroups for any MCP server not already in localStorage
+        setEnabledGroups(prev => {
+          const seeded = { ...prev }
+          for (const srv of cfg.mcp_servers || []) {
+            if (!(srv in seeded)) seeded[srv] = (cfg.enabled_mcps || []).includes(srv)
+          }
+          return seeded
+        })
         const list = await listProjects(user.user_id)
         setProjects(list)
         if (list.length > 0) {
@@ -269,9 +327,17 @@ export default function App() {
     setAbortController(controller)
 
     try {
+      // Send the list of enabled MCP server names with every request
+      const enabledMcps = (agentConfig.mcp_servers || []).filter(
+        srv => enabledGroups[srv] !== false
+      )
+
+      const custom_inputs = { thread_id: currentProjectId, user_id: userInfo.user_id }
+      if (agentConfig.mcp_servers?.length > 0) custom_inputs.enabled_mcps = enabledMcps
+
       const inputDict = {
         input: [{ role: 'user', content: prompt }],
-        custom_inputs: { thread_id: currentProjectId, user_id: userInfo.user_id },
+        custom_inputs,
         new_thread: isNewThread,
       }
       // If skills are enabled, attach the skill_name so the backend wraps the prompt
@@ -359,6 +425,13 @@ export default function App() {
         skillsEnabled={skillsEnabled}
         onToggleSkills={setSkillsEnabled}
         userInfo={userInfo}
+        mcpServers={agentConfig.mcp_servers || []}
+        enabledGroups={enabledGroups}
+        onToggleGroup={handleToggleGroup}
+        selectedModel={selectedModel}
+        onModelChange={setSelectedModel}
+        onRebuildAgent={handleRebuildAgent}
+        isRebuilding={isRebuilding}
       />
       <main className="main-content">
         <ChatPanel

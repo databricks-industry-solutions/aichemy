@@ -19,6 +19,7 @@ from mlflow.types.responses import (
 )
 
 from agent.utils_memory import get_user_id, fetch_user_memories
+from agent.utils import _disabled_mcps_ctx, _tool_server_map
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,18 @@ class WrappedAgent(ResponsesAgent):
                     from langchain_core.messages import SystemMessage
                     cc_msgs = [SystemMessage(content=memory_ctx)] + list(cc_msgs)
 
+            # Derive the disabled set from the enabled_mcps list sent by the UI.
+            # All known servers (from _tool_server_map) minus the enabled ones = disabled.
+            enabled_mcps = ci.get("enabled_mcps")
+            if enabled_mcps is not None:
+                all_servers = set(_tool_server_map.values())
+                disabled_mcps = frozenset(all_servers - set(enabled_mcps))
+            else:
+                disabled_mcps = frozenset()
+            _ctx_token = _disabled_mcps_ctx.set(disabled_mcps)
+            if disabled_mcps:
+                logger.info("Disabled MCP servers for this request: %s", disabled_mcps)
+
             inputs = {"messages": cc_msgs}
             config: dict[str, Any] = {
                 "configurable": {
@@ -170,6 +183,8 @@ class WrappedAgent(ResponsesAgent):
                 error_msg = AIMessage(content=f"**Agent error:** `{type(e).__name__}`: {e}")
                 for item in output_to_responses_items_stream([error_msg]):
                     yield item
+            finally:
+                _disabled_mcps_ctx.reset(_ctx_token)
 
     # Stream predictions for the agent, yielding output as it's generated
     def predict_stream(

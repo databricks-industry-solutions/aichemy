@@ -59,6 +59,34 @@ with open(_app_root / "config.yml") as _f:
 
 _KEEPALIVE_IDLE_SECS = int(os.environ.get("AGENT_KEEPALIVE_SECS", 600))
 
+
+def _all_mcp_names(cfg: dict) -> list[str]:
+    return (
+        list(cfg.get("external_mcp", {}).keys())
+        + list(cfg.get("custom_mcp", {}).keys())
+        + list(cfg.get("uc_connections", {}).keys())
+    )
+
+
+def _make_runtime_cfg(llm_endpoint: str | None, enabled_mcps: list[str] | None) -> dict:
+    """Return a deep copy of _cfg patched with the given runtime overrides."""
+    import copy
+    cfg = copy.deepcopy(_cfg)
+    if llm_endpoint:
+        cfg["llm_endpoint"] = llm_endpoint
+    if enabled_mcps is not None:
+        enabled_set = set(enabled_mcps)
+        cfg["external_mcp"] = {
+            k: v for k, v in cfg.get("external_mcp", {}).items() if k in enabled_set
+        }
+        cfg["custom_mcp"] = {
+            k: v for k, v in cfg.get("custom_mcp", {}).items() if k in enabled_set
+        }
+        cfg["uc_connections"] = {
+            k: v for k, v in cfg.get("uc_connections", {}).items() if k in enabled_set
+        }
+    return cfg
+
 # ---------------------------------------------------------------------------
 # Agent construction
 # ---------------------------------------------------------------------------
@@ -69,6 +97,50 @@ _agent_tools: dict[str, list[dict]] = {}
 mcp_client = None
 _agent_ready = threading.Event()
 _agent_build_error: Optional[str] = None
+_current_cfg: dict = {}   # mirrors _cfg but updated on each rebuild
+
+
+def get_current_config() -> dict:
+    """Return a snapshot of the current agent configuration for the UI."""
+    all_mcps = _all_mcp_names(_cfg)
+    enabled_mcps = _all_mcp_names(_current_cfg) if _current_cfg else all_mcps
+    return {
+        "llm_endpoint": (_current_cfg or _cfg).get("llm_endpoint", ""),
+        "mcp_servers": all_mcps,
+        "enabled_mcps": enabled_mcps,
+    }
+
+
+def trigger_rebuild(
+    llm_endpoint: str | None = None,
+    enabled_mcps: list[str] | None = None,
+) -> None:
+    """Kick off a background agent rebuild; returns immediately."""
+    global _agent_ready, _agent_build_error
+    _agent_ready.clear()
+    _agent_build_error = None
+    new_cfg = _make_runtime_cfg(llm_endpoint, enabled_mcps)
+    threading.Thread(
+        target=_do_rebuild, args=(new_cfg,), daemon=True, name="agent-rebuild"
+    ).start()
+
+
+def _do_rebuild(cfg: dict) -> None:
+    global _agent, _workflow, _agent_build_error, _current_cfg
+    mcps = _all_mcp_names(cfg)
+    logger.info("Rebuilding agent — llm=%s, mcps=%s", cfg.get("llm_endpoint"), mcps)
+    try:
+        new_workflow = _build_agent(cfg)
+        new_agent = build_responses_agent(cfg, new_workflow)
+        _workflow = new_workflow
+        _agent = new_agent
+        _current_cfg = cfg
+        logger.info("Agent rebuild complete.")
+    except Exception as exc:
+        _agent_build_error = f"{type(exc).__name__}: {exc}"
+        logger.exception("Failed to rebuild agent")
+    finally:
+        _agent_ready.set()
 
 # ---------------------------------------------------------------------------
 # Persistent MCP event loop — keeps MCP sessions alive across queries
@@ -223,11 +295,12 @@ def build_responses_agent(cfg: dict, workflow: Optional[StateGraph] = None) -> W
 
 
 def launch_agent_background():
-    global _agent, _workflow, _agent_build_error
+    global _agent, _workflow, _agent_build_error, _current_cfg
     try:
         logger.info("Building agent…")
         _workflow = _build_agent(_cfg)
         _agent = build_responses_agent(_cfg, _workflow)
+        _current_cfg = _cfg
         logger.info("Agent ready.")
         # _warmup(_agent)
     except Exception as exc:

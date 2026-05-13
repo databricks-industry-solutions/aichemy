@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import time
+import contextvars
 from databricks.sdk import WorkspaceClient
 from base64 import b64decode
 import mlflow
@@ -12,6 +13,17 @@ import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Maps tool_name -> mcp_server_name (e.g. "search_pubmed" -> "pubmed").
+# Populated at agent startup so tool wrappers know which server owns each tool.
+_tool_server_map: dict[str, str] = {}
+
+# Per-request set of disabled MCP server names.
+# Set by responses_agent._predict_stream_async; tool wrappers hard-block any
+# call whose server is in this set.
+_disabled_mcps_ctx: contextvars.ContextVar[frozenset] = contextvars.ContextVar(
+    "disabled_mcps", default=frozenset()
+)
 
 
 def load_config(file=None):
@@ -254,8 +266,15 @@ def build_mcp_list(cfg, ws_client=WorkspaceClient()):
     return servers
 
 
-def _load_mcp_tools_individually(servers, max_retries: int = 3) -> list:
-    """Try loading tools from each MCP server with retries; skip persistent failures."""
+def _load_mcp_tools_individually(
+    servers, max_retries: int = 3, server_map: dict | None = None
+) -> list:
+    """Try loading tools from each MCP server with retries; skip persistent failures.
+
+    If *server_map* is provided it is updated in-place with
+    ``{tool_name: server_name}`` entries so callers can look up which
+    server owns a given tool at request time.
+    """
     from databricks_langchain import DatabricksMultiServerMCPClient
 
     all_tools = []
@@ -272,6 +291,9 @@ def _load_mcp_tools_individually(servers, max_retries: int = 3) -> list:
                     attempt,
                 )
                 all_tools.extend(tools)
+                if server_map is not None:
+                    for t in tools:
+                        server_map[t.name] = srv.name
                 loaded = True
                 break
             except BaseException as e:
@@ -290,7 +312,7 @@ def _load_mcp_tools_individually(servers, max_retries: int = 3) -> list:
                     logger.warning(
                         "  ✗ %s: failed after %d attempts", srv.name, max_retries
                     )
-    logger.info("MCP fallback complete: %d total tools loaded", len(all_tools))
+    logger.info("MCP tools loaded: %d total across %d servers", len(all_tools), len(servers))
     return all_tools
 
 
@@ -416,6 +438,10 @@ def wrap_mcp_tools_with_resilience(tools, max_concurrent=2, call_delay=1.0):
     concurrent calls via a semaphore and inserting a delay after each call.
     Errors are returned as strings so the LLM can adapt rather than crashing
     the entire agent stream.
+
+    Also hard-blocks calls to MCP servers the user has disabled in the sidebar,
+    using the per-request ``_disabled_mcps_ctx`` ContextVar and the startup-time
+    ``_tool_server_map`` to identify which server each tool belongs to.
     """
     sem = asyncio.Semaphore(max_concurrent)
 
@@ -427,11 +453,22 @@ def wrap_mcp_tools_with_resilience(tools, max_concurrent=2, call_delay=1.0):
         async def _wrapped(
             *args, _orig=orig, _name=name, _tuple=expects_tuple, **kwargs
         ):
+            # Hard-block if the owning server is disabled for this request.
+            disabled = _disabled_mcps_ctx.get()
+            if disabled:
+                srv = _tool_server_map.get(_name)
+                if srv and srv in disabled:
+                    msg = (
+                        f"Tool '{_name}' is unavailable: the '{srv}' data source has been "
+                        f"disabled in the sidebar. Re-enable it and refresh to use this tool."
+                    )
+                    logger.info("Blocked disabled MCP tool '%s' (server='%s')", _name, srv)
+                    return (msg, None) if _tuple else msg
+
             async with sem:
                 try:
                     result = await _orig(*args, **kwargs)
                     await asyncio.sleep(call_delay)
-                    #return result
                     return _strip_lc_ids(result)
                 except Exception as e:
                     logger.error(

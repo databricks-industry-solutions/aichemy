@@ -170,6 +170,40 @@ export async function fetchUserInfo() {
 }
 
 /**
+ * Fetch the current agent configuration (llm_endpoint, mcp_servers, enabled_mcps).
+ * @returns {Promise<{llm_endpoint: string, mcp_servers: string[], enabled_mcps: string[]}>}
+ */
+export async function fetchAgentConfig() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/config`)
+    if (response.ok) return response.json()
+  } catch {
+    // ignore
+  }
+  return { llm_endpoint: '', mcp_servers: [], enabled_mcps: [] }
+}
+
+/**
+ * Trigger an agent rebuild with new model and/or MCP selection.
+ * Returns immediately; poll fetchAgentStatus() to know when ready.
+ * @param {{llmEndpoint?: string, enabledMcps?: string[]}} options
+ * @returns {Promise<{ok: boolean, detail: string}>}
+ */
+export async function rebuildAgent({ llmEndpoint, enabledMcps } = {}) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/agent/rebuild`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ llm_endpoint: llmEndpoint, enabled_mcps: enabledMcps }),
+    })
+    if (response.ok) return response.json()
+    return { ok: false, detail: `HTTP ${response.status}` }
+  } catch (e) {
+    return { ok: false, detail: e.message }
+  }
+}
+
+/**
  * Fetch DB backend status from the health endpoint.
  * @returns {Promise<{db_backend: string, db_detail: string}>}
  */

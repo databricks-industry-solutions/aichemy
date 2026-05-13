@@ -21,6 +21,7 @@ init_mlflow()
 mlflow.langchain.autolog()
 
 # Import agent to register @invoke / @stream with the server
+_agent_mod = None
 try:
     import agent.agent as _agent_mod
 except Exception as _import_err:
@@ -33,7 +34,13 @@ app = agent_server.app
 # ---------------------------------------------------------------------------
 # Custom endpoints: agent readiness + warmup
 # ---------------------------------------------------------------------------
+def _agent_import_error():
+    return JSONResponse({"error": "agent.agent failed to import — check server logs"}, status_code=503)
+
+
 async def agent_status_endpoint(request):
+    if _agent_mod is None:
+        return _agent_import_error()
     ready = _agent_mod._agent_ready.is_set()
     has_agent = _agent_mod._agent is not None
     return JSONResponse({
@@ -44,6 +51,8 @@ async def agent_status_endpoint(request):
 
 
 async def agent_warmup_endpoint(request):
+    if _agent_mod is None:
+        return _agent_import_error()
     if not _agent_mod._agent_ready.is_set():
         return JSONResponse({"ok": False, "detail": "Agent is still building"}, status_code=503)
     if _agent_mod._agent is None:
@@ -56,14 +65,39 @@ async def agent_warmup_endpoint(request):
 
 async def agent_tools_endpoint(request):
     """Return tool metadata grouped by sub-agent, collected during agent build."""
+    if _agent_mod is None:
+        return _agent_import_error()
     if not _agent_mod._agent_ready.is_set():
         return JSONResponse({"error": "Agent not ready"}, status_code=503)
     return JSONResponse(_agent_mod._agent_tools)
 
 
+async def agent_config_endpoint(request):
+    """Return the current agent configuration (llm_endpoint, available/enabled MCPs)."""
+    if _agent_mod is None:
+        return _agent_import_error()
+    return JSONResponse(_agent_mod.get_current_config())
+
+
+async def agent_rebuild_endpoint(request):
+    """Trigger a background agent rebuild with new settings. Returns immediately."""
+    if _agent_mod is None:
+        return _agent_import_error()
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    llm_endpoint = body.get("llm_endpoint") or None
+    enabled_mcps = body.get("enabled_mcps")  # None means keep all
+    _agent_mod.trigger_rebuild(llm_endpoint=llm_endpoint, enabled_mcps=enabled_mcps)
+    return JSONResponse({"ok": True, "detail": "Rebuild started"})
+
+
 app.routes.insert(0, Route("/agent-status", agent_status_endpoint, methods=["GET"]))
 app.routes.insert(0, Route("/agent-warmup", agent_warmup_endpoint, methods=["POST"]))
 app.routes.insert(0, Route("/agent-tools", agent_tools_endpoint, methods=["GET"]))
+app.routes.insert(0, Route("/agent-config", agent_config_endpoint, methods=["GET"]))
+app.routes.insert(0, Route("/agent-rebuild", agent_rebuild_endpoint, methods=["POST"]))
 
 def main():
     # Required when run on Databricks Apps (or as subprocess): nest_asyncio + uvloop

@@ -41,6 +41,7 @@ from server.dataclass import (
     AgentRequest,
     CreateProjectRequest,
     UpdateProjectRequest,
+    RebuildRequest,
 )
 
 load_env_from_app_yaml()
@@ -121,6 +122,8 @@ async def call_agent_stream(request: AgentRequest):
             custom_inputs = {"thread_id": request.custom_inputs.thread_id}
             if request.custom_inputs.user_id:
                 custom_inputs["user_id"] = request.custom_inputs.user_id
+            if request.custom_inputs.enabled_mcps is not None:
+                custom_inputs["enabled_mcps"] = request.custom_inputs.enabled_mcps
 
             input_dict = {"input": messages, "custom_inputs": custom_inputs, "stream": True}
 
@@ -309,6 +312,39 @@ async def delete_project(project_id: str):
 
 
 # -- Tools, Skills, Health --------------------------------------------------
+
+
+@app.get("/api/config")
+async def get_agent_config():
+    """Return the current agent config (llm_endpoint, available & enabled MCP servers)."""
+    try:
+        resp = requests.get(f"http://0.0.0.0:{AGENT_PORT}/agent-config", timeout=5)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    # Fallback: derive from config.yml directly
+    cfg = load_config() or {}
+    all_mcps = list(cfg.get("external_mcp", {}).keys()) + list(cfg.get("custom_mcp", {}).keys())
+    return {
+        "llm_endpoint": cfg.get("llm_endpoint", ""),
+        "mcp_servers": all_mcps,
+        "enabled_mcps": all_mcps,
+    }
+
+
+@app.post("/api/agent/rebuild")
+async def rebuild_agent(req: RebuildRequest):
+    """Trigger an agent rebuild with new LLM and/or MCP selection."""
+    try:
+        resp = requests.post(
+            f"http://0.0.0.0:{AGENT_PORT}/agent-rebuild",
+            json={"llm_endpoint": req.llm_endpoint, "enabled_mcps": req.enabled_mcps},
+            timeout=10,
+        )
+        return resp.json()
+    except Exception as e:
+        return {"ok": False, "detail": str(e)}
 
 
 @app.get("/api/tools")
