@@ -36,6 +36,15 @@ export default function ChatPanel({
   const [inputValue, setInputValue] = useState('')
   const [workflowInput, setWorkflowInput] = useState('')
   const [compoundProps, setCompoundProps] = useState([])
+  const textareaRef = useRef(null)
+
+  // Auto-grow the textarea as content expands
+  useEffect(() => {
+    const ta = textareaRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = `${ta.scrollHeight}px`
+  }, [inputValue])
 
   const handleSubmit = (e) => {
     e.preventDefault()
@@ -43,6 +52,14 @@ export default function ChatPanel({
       const skillName = skillsEnabled && selectedWorkflow ? selectedWorkflow : undefined
       onSendMessage(inputValue, { skillName })
       setInputValue('')
+      if (textareaRef.current) textareaRef.current.style.height = 'auto'
+    }
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSubmit(e)
     }
   }
 
@@ -67,8 +84,8 @@ export default function ChatPanel({
     )
   }
 
-  const handleWorkflowKeyDown = (e) => {
-    if (e.key !== 'Enter' || !workflowInput.trim()) return
+  const handleWorkflowEnter = () => {
+    if (!workflowInput.trim()) return
 
     if (selectedWorkflow === 'target-identification') {
       handleWorkflowSubmit(
@@ -83,6 +100,10 @@ export default function ChatPanel({
         `Use PubMed to find the safety profile of ${workflowInput}. If citing studies, please state the strength of the evidence based on the study design.`
       )
     }
+  }
+
+  const handleWorkflowKeyDown = (e) => {
+    if (e.key === 'Enter') handleWorkflowEnter()
   }
 
   const handleLeadOptSubmit = () => {
@@ -126,7 +147,7 @@ export default function ChatPanel({
                   )}
                 </>
               ) : (
-                msg.content
+                <span style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</span>
               )}
             </div>
           </div>
@@ -154,6 +175,7 @@ export default function ChatPanel({
             onKeyDown={handleWorkflowKeyDown}
             disabled={isLoading}
           />
+          <button className="workflow-enter-btn" onClick={handleWorkflowEnter} disabled={isLoading || !workflowInput.trim()}>Enter</button>
           <button className="clear-btn" onClick={onClearWorkflow}>Clear</button>
         </div>
       )}
@@ -168,6 +190,7 @@ export default function ChatPanel({
             onKeyDown={handleWorkflowKeyDown}
             disabled={isLoading}
           />
+          <button className="workflow-enter-btn" onClick={handleWorkflowEnter} disabled={isLoading || !workflowInput.trim()}>Enter</button>
           <button className="clear-btn" onClick={onClearWorkflow}>Clear</button>
         </div>
       )}
@@ -218,6 +241,7 @@ export default function ChatPanel({
             onKeyDown={handleWorkflowKeyDown}
             disabled={isLoading}
           />
+          <button className="workflow-enter-btn" onClick={handleWorkflowEnter} disabled={isLoading || !workflowInput.trim()}>Enter</button>
           <button className="clear-btn" onClick={onClearWorkflow}>Clear</button>
         </div>
       )}
@@ -244,13 +268,15 @@ export default function ChatPanel({
       {/* Chat Input + Reset */}
       <div className="chat-input-row">
         <form className="chat-input-container" onSubmit={handleSubmit}>
-          <input
-            type="text"
+          <textarea
+            ref={textareaRef}
             className="chat-input"
-            placeholder="Ask me anything..."
+            placeholder="Ask me anything... (Shift+Enter for new line)"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={handleKeyDown}
             disabled={isLoading}
+            rows={1}
           />
           <button type="submit" className="send-button" disabled={isLoading || !inputValue.trim()}>
             Send

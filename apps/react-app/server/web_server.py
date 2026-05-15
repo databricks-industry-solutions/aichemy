@@ -151,7 +151,6 @@ async def call_agent_stream(request: AgentRequest):
 
             yield _sse({"type": "status", "content": "Streaming response..."})
 
-            is_new_thread = request.new_thread is True
             accumulated_output = []
             trace_id = None
 
@@ -178,8 +177,7 @@ async def call_agent_stream(request: AgentRequest):
                     item = event.get("item")
                     if item:
                         accumulated_output.append(item)
-                        if is_new_thread:
-                            yield from stream_new_content(item, _sse)
+                        yield from stream_new_content(item, _sse)
                 elif ev_type == "error":
                     yield _sse({"type": "error", "content": event.get("message", str(event))})
                     return
@@ -188,15 +186,6 @@ async def call_agent_stream(request: AgentRequest):
 
             print(f"[stream] SSE event types received: {seen_event_types}")
             print(f"[stream] accumulated_output items: {len(accumulated_output)}, trace_id: {trace_id}")
-
-            if not is_new_thread and accumulated_output:
-                last_msg = next(
-                    (it for it in reversed(accumulated_output)
-                     if it.get("type") == "message"
-                     and any(b.get("type") == "output_text" for b in it.get("content") or [])),
-                    accumulated_output[-1],
-                )
-                yield from stream_new_content(last_msg, _sse)
 
             if trace_id:
                 print(f"trace_id: {trace_id}")

@@ -544,6 +544,12 @@ body {
   border-radius: 8px; cursor: pointer; font-size: 14px; color: var(--text-secondary);
 }
 .clear-btn:hover { background: var(--bg-color); border-color: var(--text-muted); }
+.workflow-enter-btn {
+  padding: 10px 16px; background: var(--primary-color); color: white;
+  border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;
+}
+.workflow-enter-btn:hover:not(:disabled) { background: var(--primary-hover); }
+.workflow-enter-btn:disabled { background: #ccc; cursor: not-allowed; }
 
 /* Pills */
 .compound-props { margin-top: 8px; }
@@ -572,11 +578,13 @@ body {
 .example-pill { text-align: left; }
 
 /* Chat input row */
-.chat-input-row { display: flex; gap: 8px; align-items: center; padding-top: 12px; border-top: 1px solid var(--border-color); }
-.chat-input-container { display: flex; gap: 8px; flex: 1; }
+.chat-input-row { display: flex; gap: 8px; align-items: flex-end; padding-top: 12px; border-top: 1px solid var(--border-color); }
+.chat-input-container { display: flex; gap: 8px; flex: 1; align-items: flex-end; }
 .chat-input {
   flex: 1; padding: 12px 18px; border: 1px solid var(--border-color);
-  border-radius: 24px; font-size: 14px; outline: none; font-family: inherit;
+  border-radius: 16px; font-size: 14px; outline: none; font-family: inherit;
+  resize: none; overflow-y: auto; max-height: 200px; min-height: 44px;
+  line-height: 1.5;
 }
 .chat-input:focus { border-color: var(--primary-color); }
 .chat-input:disabled { background: var(--bg-color); cursor: not-allowed; }
