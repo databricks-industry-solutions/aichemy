@@ -60,12 +60,14 @@ with open(_app_root / "config.yml") as _f:
 _KEEPALIVE_IDLE_SECS = int(os.environ.get("AGENT_KEEPALIVE_SECS", 600))
 
 
+_AGENT_SECTIONS = ("external_mcp", "custom_mcp", "uc_connections", "retriever", "genie", "uc_functions")
+
+
 def _all_mcp_names(cfg: dict) -> list[str]:
-    return (
-        list(cfg.get("external_mcp", {}).keys())
-        + list(cfg.get("custom_mcp", {}).keys())
-        + list(cfg.get("uc_connections", {}).keys())
-    )
+    names = []
+    for section in _AGENT_SECTIONS:
+        names.extend(cfg.get(section, {}).keys())
+    return names
 
 
 def _make_runtime_cfg(llm_endpoint: str | None, enabled_mcps: list[str] | None) -> dict:
@@ -76,15 +78,10 @@ def _make_runtime_cfg(llm_endpoint: str | None, enabled_mcps: list[str] | None) 
         cfg["llm_endpoint"] = llm_endpoint
     if enabled_mcps is not None:
         enabled_set = set(enabled_mcps)
-        cfg["external_mcp"] = {
-            k: v for k, v in cfg.get("external_mcp", {}).items() if k in enabled_set
-        }
-        cfg["custom_mcp"] = {
-            k: v for k, v in cfg.get("custom_mcp", {}).items() if k in enabled_set
-        }
-        cfg["uc_connections"] = {
-            k: v for k, v in cfg.get("uc_connections", {}).items() if k in enabled_set
-        }
+        for section in _AGENT_SECTIONS:
+            cfg[section] = {
+                k: v for k, v in cfg.get(section, {}).items() if k in enabled_set
+            }
     return cfg
 
 # ---------------------------------------------------------------------------

@@ -16,10 +16,10 @@ uc_functions:
   chem_utils:
     - healthcare_lifesciences.qsar.get_embedding
     - healthcare_lifesciences.qsar.molecule_png_url
-# uc_connections:
-#   pubchem: conn_aichemy_pubchem
-#   pubmed: conn_aichemy_pubmed
-#   opentargets: conn_aichemy_opentargets
+uc_connections:
+  clinical_trials: conn_clinicaltrials
+  US_census: conn_hls_mcp
+#  atropos: conn_atropos_mcp
 external_mcp:
   pubchem: 
     url: https://glama.ai/endpoints/xb306rnopq/mcp
@@ -29,8 +29,6 @@ external_mcp:
     url: https://glama.ai/endpoints/mp1ke6xrpi/mcp
     scope: aichemy
     secret: pubmed_glama_api
-  # opentargets: 
-  #   url: https://mcp.platform.opentargets.org/mcp
 custom_mcp:
   opentargets:
     url: https://opentargets-mcp-2556758628403379.aws.databricksapps.com/mcp

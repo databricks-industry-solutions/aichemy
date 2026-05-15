@@ -2,11 +2,23 @@ import { useState, useEffect, useMemo } from 'react'
 import { fetchSkills } from '../api/agentAPI'
 import modelsTxt from '/models.txt?raw'
 
-// Display names for MCP server names returned by the backend
+// Display names for all agent component keys returned by the backend
 const MCP_DISPLAY = {
-  pubchem: '🧪 PubChem',
-  pubmed: '📚 PubMed',
-  opentargets: '🎯 OpenTargets',
+  // external_mcp
+  pubchem:               '🧪 PubChem',
+  pubmed:                '📚 PubMed',
+  // custom_mcp
+  opentargets:           '🎯 OpenTargets',
+  // uc_connections
+  clinical_trials:        '🏥 ClinicalTrials',
+  US_census:              '🇺🇸 US Census',
+  atropos:               '🩺 Atropos',
+  // retriever
+  zinc_molecular_search: '🔍 ZINC Search',
+  // genie
+  drugbank:              '💊 DrugBank',
+  // uc_functions
+  chem_utils:            '🛠️ Chem Utils',
 }
 
 // Load model list from public/models.txt
@@ -169,7 +181,7 @@ export default function Sidebar({
       <div className="sidebar-divider" />
 
       {/* Agent configuration: model + MCP + rebuild */}
-      <div className="sidebar-caption">Agent</div>
+      <div className="sidebar-caption">Settings</div>
 
       {/* Model selector */}
       <div className="model-selector-row">
