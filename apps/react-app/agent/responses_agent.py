@@ -140,10 +140,16 @@ class WrappedAgent(ResponsesAgent):
             if user_id:
                 config["configurable"]["user_id"] = user_id
 
-            # Stream node-level updates only (not individual LLM tokens via "messages"
-            # mode, which would leak the supervisor's intermediate reasoning/hallucinations).
-            seen_msg_ids: set[str] = set()
+            # Pre-seed seen_msg_ids with any messages already in the checkpoint
+            # so that prior-turn messages are never re-emitted on follow-up turns.
+            existing_state = await self.agent.aget_state(config)
+            seen_msg_ids: set[str] = {
+                getattr(msg, "id", None)
+                for msg in (existing_state.values or {}).get("messages", [])
+                if getattr(msg, "id", None)
+            }
             seen_item_ids: set[str] = set()
+            seen_non_supervisor_output = False  # tracks whether any sub-agent has responded
 
             try:
                 async for event in self.agent.astream(
@@ -152,12 +158,17 @@ class WrappedAgent(ResponsesAgent):
                     for node_name, node_data in event.items():
                         if node_data is None or not isinstance(node_data, dict):
                             continue
-                        # Skip the supervisor's own messages — they may contain
-                        # hallucinated summaries. The graph's output_mode="last_message"
-                        # ensures the sub-agent's final answer is the authoritative output;
-                        # honour that by only surfacing sub-agent messages.
+                        # Skip supervisor messages only when a sub-agent has already
+                        # produced output — in that case the supervisor may emit a
+                        # hallucinated re-summary which we don't want to surface.
+                        # If no sub-agent has responded yet, the supervisor IS the
+                        # final answer (e.g. direct factual replies) and must be shown.
                         if node_name == "supervisor":
-                            continue
+                            if seen_non_supervisor_output:
+                                continue
+                        else:
+                            if node_data.get("messages"):
+                                seen_non_supervisor_output = True
                         if len(node_data.get("messages", [])) > 0:
                             unique_messages = []
                             for msg in node_data["messages"]:
