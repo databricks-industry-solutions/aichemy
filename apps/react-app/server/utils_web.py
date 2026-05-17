@@ -10,7 +10,6 @@ import re
 import json
 import yaml
 import requests
-import time
 import asyncio
 from pathlib import Path
 from typing import Optional, Union
@@ -159,7 +158,7 @@ def strip_tool_call_tags(text_content: str) -> str:
 
 
 def stream_new_content(item: Optional[dict], _sse):
-    """Yield SSE events for one response item's text in chunks. Skips tool-call tags."""
+    """Yield SSE text event for one response item. Emits the full text immediately."""
     if not item:
         return
     for block in item.get("content") or []:
@@ -168,11 +167,7 @@ def stream_new_content(item: Optional[dict], _sse):
             if text:
                 cleaned = strip_tool_call_tags(text)
                 if cleaned:
-                    words = cleaned.split(" ")
-                    for i, word in enumerate(words):
-                        chunk = word + (" " if i < len(words) - 1 else "")
-                        yield _sse({"type": "text", "content": chunk})
-                        time.sleep(0.02)
+                    yield _sse({"type": "text", "content": cleaned})
 
 
 def parse_genie_results(trace_dict: dict) -> list[dict]:

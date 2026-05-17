@@ -150,45 +150,88 @@ class WrappedAgent(ResponsesAgent):
             }
             seen_item_ids: set[str] = set()
             seen_non_supervisor_output = False  # tracks whether any sub-agent has responded
+            # IDs of messages whose text was already emitted as per-token deltas;
+            # the corresponding response.output_item.done should not re-emit the text.
+            token_streamed_msg_ids: set[str] = set()
+
+            def _should_skip_supervisor() -> bool:
+                return seen_non_supervisor_output
 
             try:
-                async for event in self.agent.astream(
-                    inputs, config=config, stream_mode="updates"
+                async for raw_event in self.agent.astream(
+                    inputs, config=config, stream_mode=["updates", "messages"]
                 ):
-                    for node_name, node_data in event.items():
-                        if node_data is None or not isinstance(node_data, dict):
+                    # stream_mode list → events are (mode, data) tuples
+                    if isinstance(raw_event, tuple):
+                        mode, data = raw_event
+                    else:
+                        mode, data = "updates", raw_event
+
+                    # ── per-token streaming ────────────────────────────────────
+                    if mode == "messages":
+                        msg_chunk, metadata = data
+                        node_name = metadata.get("langgraph_node", "")
+
+                        if node_name == "supervisor" and _should_skip_supervisor():
                             continue
-                        # Skip supervisor messages only when a sub-agent has already
-                        # produced output — in that case the supervisor may emit a
-                        # hallucinated re-summary which we don't want to surface.
-                        # If no sub-agent has responded yet, the supervisor IS the
-                        # final answer (e.g. direct factual replies) and must be shown.
-                        if node_name == "supervisor":
-                            if seen_non_supervisor_output:
+
+                        # Only stream AI text tokens; skip tool messages (raw JSON)
+                        # and tool-call chunks (list content).
+                        if isinstance(msg_chunk, ToolMessage):
+                            continue
+                        content = msg_chunk.content if isinstance(msg_chunk.content, str) else ""
+                        if not content:
+                            continue
+
+                        msg_id = getattr(msg_chunk, "id", None)
+                        if msg_id:
+                            token_streamed_msg_ids.add(msg_id)
+
+                        yield ResponsesAgentStreamEvent(
+                            type="response.output_text.delta",
+                            output_index=0,
+                            content_index=0,
+                            delta=content,
+                            item_id=msg_id or "",
+                        )
+
+                    # ── node-complete events ───────────────────────────────────
+                    elif mode == "updates":
+                        for node_name, node_data in data.items():
+                            if node_data is None or not isinstance(node_data, dict):
                                 continue
-                        else:
-                            if node_data.get("messages"):
+                            if node_name == "supervisor" and _should_skip_supervisor():
+                                continue
+                            if node_name != "supervisor" and node_data.get("messages"):
                                 seen_non_supervisor_output = True
-                        if len(node_data.get("messages", [])) > 0:
-                            unique_messages = []
-                            for msg in node_data["messages"]:
-                                msg_id = getattr(msg, "id", None)
-                                if msg_id and msg_id in seen_msg_ids:
-                                    continue
-                                if msg_id:
-                                    seen_msg_ids.add(msg_id)
-                                if isinstance(msg, ToolMessage) and not isinstance(msg.content, str):
-                                    msg.content = json.dumps(msg.content)
-                                unique_messages.append(msg)
-                            for item in output_to_responses_items_stream(unique_messages):
-                                item_id = getattr(item, "item_id", None) or (
-                                    getattr(item, "item", None) and getattr(item.item, "id", None)
-                                )
-                                if item_id and item_id in seen_item_ids:
-                                    continue
-                                if item_id:
-                                    seen_item_ids.add(item_id)
-                                yield item
+                            if len(node_data.get("messages", [])) > 0:
+                                unique_messages = []
+                                for msg in node_data["messages"]:
+                                    msg_id = getattr(msg, "id", None)
+                                    if msg_id and msg_id in seen_msg_ids:
+                                        continue
+                                    if msg_id:
+                                        seen_msg_ids.add(msg_id)
+                                    if isinstance(msg, ToolMessage) and not isinstance(msg.content, str):
+                                        msg.content = json.dumps(msg.content)
+                                    unique_messages.append(msg)
+                                # Emit events per message so we can suppress delta
+                                # re-emission for messages already streamed per-token.
+                                for msg in unique_messages:
+                                    msg_id = getattr(msg, "id", None)
+                                    already_streamed = bool(msg_id and msg_id in token_streamed_msg_ids)
+                                    for item in output_to_responses_items_stream([msg]):
+                                        if already_streamed and getattr(item, "type", None) == "response.output_text.delta":
+                                            continue
+                                        item_id = getattr(item, "item_id", None) or (
+                                            getattr(item, "item", None) and getattr(item.item, "id", None)
+                                        )
+                                        if item_id and item_id in seen_item_ids:
+                                            continue
+                                        if item_id:
+                                            seen_item_ids.add(item_id)
+                                        yield item
+
             except Exception as e:
                 logger.exception("Error during agent streaming")
                 error_msg = AIMessage(content=f"**Agent error:** `{type(e).__name__}`: {e}")

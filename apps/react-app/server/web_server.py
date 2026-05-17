@@ -173,11 +173,14 @@ async def call_agent_stream(request: AgentRequest):
 
                 ev_type = event.get("type")
                 seen_event_types.append(ev_type)
-                if ev_type == "response.output_item.done":
+                if ev_type == "response.output_text.delta":
+                    delta = event.get("delta", "")
+                    if delta:
+                        yield _sse({"type": "text", "content": delta})
+                elif ev_type == "response.output_item.done":
                     item = event.get("item")
                     if item:
                         accumulated_output.append(item)
-                        yield from stream_new_content(item, _sse)
                 elif ev_type == "error":
                     yield _sse({"type": "error", "content": event.get("message", str(event))})
                     return
@@ -235,7 +238,7 @@ def _fallback_from_trace(trace_id: str, _sse):
 def _enrich_from_trace(trace_id: str, _sse):
     """Normal path: SSE worked, parse trace for tool_calls/genie metadata."""
     try:
-        trace = get_trace(trace_id, retries=3, delay=1.0)
+        trace = get_trace(trace_id, retries=5, delay=1.0)
         if trace:
             parsed = parse_trace_for_ui(serialize_trace(trace))
             print(f"parsed: {parsed}")
