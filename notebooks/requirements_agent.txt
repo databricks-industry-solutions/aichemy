@@ -79,7 +79,7 @@ httplib2==0.20.2
 httpx==0.28.1
 httpx-sse==0.4.3
 huey==2.6.0
-idna==3.4
+idna==3.15
 importlib_metadata==8.7.1
 ipyflow-core==0.0.198
 ipykernel==6.25.0
