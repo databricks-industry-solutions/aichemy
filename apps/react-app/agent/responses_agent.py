@@ -81,7 +81,15 @@ async def process_agent_astream_events(
         active_text_item_id = None
         active_text_content = ""
 
-    async for event in async_stream:
+    async for raw_event in async_stream:
+        # When astream is called with subgraphs=True, events are
+        # (namespace_tuple, mode, data) so sub-agent activity surfaces here.
+        # Without subgraphs they are (mode, data). Normalize to (mode, data).
+        if len(raw_event) == 3:
+            event = raw_event[1:]
+        else:
+            event = raw_event
+
         if event[0] == "messages":
             try:
                 chunk = event[1][0]
@@ -422,7 +430,12 @@ class WrappedAgent(ResponsesAgent):
 
             try:
                 async for event in process_agent_astream_events(
-                    self.agent.astream(inputs, config=config, stream_mode=["updates", "messages"]),
+                    self.agent.astream(
+                        inputs,
+                        config=config,
+                        stream_mode=["updates", "messages"],
+                        subgraphs=True,
+                    ),
                     seen_msg_ids=seen_msg_ids,
                 ):
                     yield event
