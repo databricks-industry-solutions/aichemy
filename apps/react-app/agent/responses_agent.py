@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 async def process_agent_astream_events(
     async_stream: AsyncIterator[Any],
+    seen_msg_ids: set[str] | None = None,
 ) -> AsyncGenerator[ResponsesAgentStreamEvent, None]:
     """Convert raw LangGraph astream events into ResponsesAgentStreamEvents.
 
@@ -45,7 +46,13 @@ async def process_agent_astream_events(
     - Per-token text deltas (messages mode)
     - Inline tool call start / argument deltas / done (messages mode)
     - Tool results and completed text (updates mode)
+
+    seen_msg_ids: message IDs already present in the checkpointer before this
+    turn started. When LangGraph replays prior-turn messages through the
+    "updates" stream on follow-up turns, we skip any message whose id is in
+    this set so the client doesn't see the previous response re-emitted.
     """
+    seen_msg_ids = set(seen_msg_ids or ())
     response_id = f"{_FAKE_ID_PREFIX}{uuid4().hex[:16]}"
     in_turn = False
     turn_output_items: list[dict] = []
@@ -174,9 +181,20 @@ async def process_agent_astream_events(
                 if not messages:
                     continue
 
+                fresh_messages = []
+                for msg in messages:
+                    msg_id = getattr(msg, "id", None)
+                    if msg_id and msg_id in seen_msg_ids:
+                        continue
+                    if msg_id:
+                        seen_msg_ids.add(msg_id)
+                    fresh_messages.append(msg)
+                if not fresh_messages:
+                    continue
+
                 has_ai_message = False
 
-                for msg in messages:
+                for msg in fresh_messages:
                     if isinstance(msg, ToolMessage):
                         content = msg.content if isinstance(msg.content, str) else json.dumps(msg.content)
                         item = create_function_call_output_item(
@@ -395,9 +413,17 @@ class WrappedAgent(ResponsesAgent):
             if user_id:
                 config["configurable"]["user_id"] = user_id
 
+            existing_state = await self.agent.aget_state(config)
+            seen_msg_ids: set[str] = {
+                getattr(msg, "id", None)
+                for msg in (existing_state.values or {}).get("messages", [])
+                if getattr(msg, "id", None)
+            }
+
             try:
                 async for event in process_agent_astream_events(
-                    self.agent.astream(inputs, config=config, stream_mode=["updates", "messages"])
+                    self.agent.astream(inputs, config=config, stream_mode=["updates", "messages"]),
+                    seen_msg_ids=seen_msg_ids,
                 ):
                     yield event
             except Exception as e:
