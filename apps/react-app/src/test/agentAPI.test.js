@@ -1,147 +1,158 @@
-/**
- * Unit tests for agentAPI utility functions
- * 
- * These tests verify the API helper functions work correctly
- * without requiring a running server.
- * 
- * Run tests:
- *   npm run test:run
- */
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { askAgentStream, extractMessageItemText } from '../api/agentAPI.js'
 
-import { describe, it, expect } from 'vitest'
-import { extractTextContent } from '../api/agentAPI.js'
-
-describe('extractTextContent', () => {
-  it('should extract text from valid response with message type', () => {
-    const mockResponse = {
-      output: [
-        {
-          type: 'message',
-          content: [{ text: 'Hello, how can I help you?' }]
-        }
-      ]
-    }
-
-    const result = extractTextContent(mockResponse)
-    
-    expect(result).toHaveLength(1)
-    expect(result[0]).toBe('Hello, how can I help you?')
+function mockSseFetch(events) {
+  const encoder = new TextEncoder()
+  const body = new ReadableStream({
+    start(controller) {
+      for (const event of events) {
+        const payload = typeof event === 'string' ? event : JSON.stringify(event)
+        controller.enqueue(encoder.encode(`data: ${payload}\n\n`))
+      }
+      controller.close()
+    },
   })
 
-  it('should extract multiple text contents from response', () => {
-    const mockResponse = {
-      output: [
-        {
-          type: 'message',
-          content: [{ text: 'First message' }]
-        },
-        {
-          type: 'tool_call',
-          content: [{ text: 'Tool output' }]
-        },
-        {
-          type: 'message',
-          content: [{ text: 'Second message' }]
-        }
-      ]
-    }
+  global.fetch = vi.fn().mockResolvedValue({
+    ok: true,
+    body,
+  })
+}
 
-    const result = extractTextContent(mockResponse)
-    
-    expect(result).toHaveLength(2)
-    expect(result).toContain('First message')
-    expect(result).toContain('Second message')
+describe('extractMessageItemText', () => {
+  it('extracts output text from ResponsesAgent message content', () => {
+    expect(extractMessageItemText({
+      type: 'message',
+      content: [
+        { type: 'output_text', text: 'First' },
+        { type: 'output_text', text: 'Second' },
+      ],
+    })).toBe('First\nSecond')
   })
 
-  it('should not include duplicate text contents', () => {
-    const mockResponse = {
-      output: [
-        {
-          type: 'message',
-          content: [{ text: 'Same message' }]
-        },
-        {
-          type: 'message',
-          content: [{ text: 'Same message' }]
-        }
-      ]
-    }
-
-    const result = extractTextContent(mockResponse)
-    
-    expect(result).toHaveLength(1)
-    expect(result[0]).toBe('Same message')
-  })
-
-  it('should return empty array for response without output', () => {
-    const mockResponse = {}
-    const result = extractTextContent(mockResponse)
-    expect(result).toHaveLength(0)
-  })
-
-  it('should return empty array for empty output array', () => {
-    const mockResponse = { output: [] }
-    const result = extractTextContent(mockResponse)
-    expect(result).toHaveLength(0)
-  })
-
-  it('should skip non-message types', () => {
-    const mockResponse = {
-      output: [
-        {
-          type: 'tool_call',
-          content: [{ text: 'Tool call output' }]
-        },
-        {
-          type: 'function',
-          content: [{ text: 'Function output' }]
-        }
-      ]
-    }
-
-    const result = extractTextContent(mockResponse)
-    expect(result).toHaveLength(0)
-  })
-
-  it('should handle null/undefined gracefully', () => {
-    expect(extractTextContent(null)).toHaveLength(0)
-    expect(extractTextContent(undefined)).toHaveLength(0)
-  })
-
-  it('should handle malformed content array', () => {
-    const mockResponse = {
-      output: [
-        {
-          type: 'message',
-          content: null
-        },
-        {
-          type: 'message',
-          content: []
-        },
-        {
-          type: 'message'
-          // missing content
-        }
-      ]
-    }
-
-    // Should not throw, just return empty
-    const result = extractTextContent(mockResponse)
-    expect(Array.isArray(result)).toBe(true)
+  it('handles missing content safely', () => {
+    expect(extractMessageItemText({ type: 'message' })).toBe('')
+    expect(extractMessageItemText(null)).toBe('')
   })
 })
 
-describe('API Configuration', () => {
-  it('should use correct default API URL', async () => {
-    // Check that the API URL is set correctly
-    const expectedDefault = 'http://localhost:8000'
-    
-    // Import dynamically to check the default
-    const module = await import('../api/agentAPI.js')
-    
-    // The module should export the askAgent function
-    expect(typeof module.askAgent).toBe('function')
-    expect(typeof module.extractTextContent).toBe('function')
+describe('askAgentStream', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('emits official AgentServer text deltas', async () => {
+    mockSseFetch([
+      { type: 'response.output_text.delta', item_id: 'msg-1', delta: 'Hel' },
+      { type: 'response.output_text.delta', item_id: 'msg-1', delta: 'lo' },
+      '[DONE]',
+    ])
+
+    const chunks = []
+    await askAgentStream({ input: [], custom_inputs: { thread_id: 't1' } }, {
+      onText: chunk => chunks.push(chunk),
+    })
+
+    expect(chunks.join('')).toBe('Hello')
+  })
+
+  it('falls back to completed message items when no deltas arrive', async () => {
+    mockSseFetch([
+      {
+        type: 'response.output_item.done',
+        item: {
+          id: 'msg-1',
+          type: 'message',
+          content: [{ type: 'output_text', text: 'Final answer' }],
+        },
+      },
+      '[DONE]',
+    ])
+
+    const chunks = []
+    await askAgentStream({ input: [], custom_inputs: { thread_id: 't1' } }, {
+      onText: chunk => chunks.push(chunk),
+    })
+
+    expect(chunks).toEqual(['Final answer'])
+  })
+
+  it('emits completed content parts before final output items', async () => {
+    mockSseFetch([
+      {
+        type: 'response.content_part.done',
+        item_id: 'msg-1',
+        part: { type: 'output_text', text: 'Final answer' },
+      },
+      {
+        type: 'response.output_item.done',
+        item: {
+          id: 'msg-1',
+          type: 'message',
+          content: [{ type: 'output_text', text: 'Final answer' }],
+        },
+      },
+      '[DONE]',
+    ])
+
+    const chunks = []
+    await askAgentStream({ input: [], custom_inputs: { thread_id: 't1' } }, {
+      onText: chunk => chunks.push(chunk),
+    })
+
+    expect(chunks).toEqual(['Final answer'])
+  })
+
+  it('does not duplicate final message content after streaming deltas', async () => {
+    mockSseFetch([
+      { type: 'response.output_text.delta', item_id: 'msg-1', delta: 'Final answer' },
+      {
+        type: 'response.output_item.done',
+        item: {
+          id: 'msg-1',
+          type: 'message',
+          content: [{ type: 'output_text', text: 'Final answer' }],
+        },
+      },
+      '[DONE]',
+    ])
+
+    const chunks = []
+    await askAgentStream({ input: [], custom_inputs: { thread_id: 't1' } }, {
+      onText: chunk => chunks.push(chunk),
+    })
+
+    expect(chunks).toEqual(['Final answer'])
+  })
+
+  it('surfaces tool calls and tool results from official events', async () => {
+    mockSseFetch([
+      {
+        type: 'response.output_item.added',
+        item: { id: 'fc-1', type: 'function_call', call_id: 'call-1', name: 'search', arguments: '' },
+      },
+      {
+        type: 'response.output_item.done',
+        item: { id: 'fc-1', type: 'function_call', call_id: 'call-1', name: 'search', arguments: '{"q":"EGFR"}' },
+      },
+      {
+        type: 'response.output_item.done',
+        item: { type: 'function_call_output', call_id: 'call-1', output: '{"ok":true}' },
+      },
+      '[DONE]',
+    ])
+
+    const starts = []
+    const done = []
+    const results = []
+    await askAgentStream({ input: [], custom_inputs: { thread_id: 't1' } }, {
+      onToolCallStart: data => starts.push(data),
+      onToolCallDone: data => done.push(data),
+      onToolCallResult: data => results.push(data),
+    })
+
+    expect(starts[0]).toMatchObject({ call_id: 'call-1', name: 'search' })
+    expect(done[0]).toMatchObject({ call_id: 'call-1', arguments: '{"q":"EGFR"}' })
+    expect(results[0]).toMatchObject({ call_id: 'call-1', output: '{"ok":true}' })
   })
 })

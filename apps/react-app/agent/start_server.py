@@ -4,7 +4,7 @@ Serves the agent at POST /invocations, GET /health; proxies UI to Streamlit.
 """
 from pathlib import Path
 import sys
-from mlflow.genai.agent_server import AgentServer
+from databricks_ai_bridge.long_running import LongRunningAgentServer
 import mlflow
 import os
 from starlette.responses import JSONResponse
@@ -14,7 +14,7 @@ from starlette.routing import Route
 _app_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_app_root))
 
-from agent.utils import init_mlflow, load_env_from_app_yaml
+from agent.utils import init_mlflow, load_env_from_app_yaml, replace_fake_id
 
 load_env_from_app_yaml()
 init_mlflow()
@@ -28,7 +28,17 @@ except Exception as _import_err:
     import logging as _logging
     _logging.getLogger(__name__).error("Failed to import agent.agent: %s", _import_err, exc_info=True)
 
-agent_server = AgentServer("ResponsesAgent", enable_chat_proxy=True)
+class AgentServer(LongRunningAgentServer):
+    def transform_stream_event(self, event, response_id):
+        return replace_fake_id(event, response_id)
+
+
+agent_server = AgentServer(
+    "ResponsesAgent",
+    enable_chat_proxy=True,
+    task_timeout_seconds=float(os.getenv("TASK_TIMEOUT_SECONDS", "3600")),
+    poll_interval_seconds=float(os.getenv("POLL_INTERVAL_SECONDS", "1.0")),
+)
 app = agent_server.app
 
 # ---------------------------------------------------------------------------
