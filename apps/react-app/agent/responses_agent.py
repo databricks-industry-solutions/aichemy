@@ -57,6 +57,11 @@ async def process_agent_astream_events(
     in_turn = False
     turn_output_items: list[dict] = []
     output_index = 0
+    # Number of text items emitted in this stream; used to add a "\n\n"
+    # separator between consecutive assistant messages (otherwise the
+    # supervisor's text and each sub-agent's text get concatenated with
+    # no whitespace and the UI shows them mashed together).
+    text_items_emitted = 0
     active_text_item_id: str | None = None
     active_text_content = ""
     active_tool_calls: dict[int, dict] = {}
@@ -152,6 +157,9 @@ async def process_agent_astream_events(
                     if not active_text_item_id:
                         active_text_item_id = _new_id()
                         active_text_content = ""
+                        if text_items_emitted > 0:
+                            content = "\n\n" + content
+                        text_items_emitted += 1
                         yield ResponsesAgentStreamEvent(
                             type="response.output_item.added",
                             item={
@@ -266,6 +274,9 @@ async def process_agent_astream_events(
                         item_id = active_text_item_id or _new_id()
 
                         if not active_text_item_id:
+                            if text_items_emitted > 0:
+                                text = "\n\n" + text
+                            text_items_emitted += 1
                             yield ResponsesAgentStreamEvent(
                                 type="response.output_item.added",
                                 item={
