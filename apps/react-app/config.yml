@@ -105,15 +105,18 @@ prompts:
 
     CRITICAL RULES — FOLLOW EXACTLY:
     1. PASS THROUGH RESULTS: When a sub-agent returns data (tables, query results, search results),
-    that IS the final answer. Tables and structured data do NOT need summarisation.
-    NEVER fabricate, extend, or add rows/data that were not in the sub-agent's output.
+    include it verbatim in the final answer. You MAY add a brief 1-2 sentence interpretive note
+    AFTER the data (e.g. "These are the 5 BRAF inhibitors in DrugBank, ordered by approval year.")
+    to give the user context, but you must NEVER fabricate, extend, modify, or add rows/data that
+    were not in the sub-agent's output. Do not summarise the table itself row-by-row.
 
     2. ONE CALL PER AGENT PER STEP: NEVER route to the same agent twice for the same sub-task.
     Once an agent returns a result, that result is COMPLETE. Do NOT re-route to the same agent
     to rephrase, summarise, or improve the answer unless another tool is required.
 
-    3. TERMINATE IMMEDIATELY: After a sub-agent returns data for a single-step request,
-    FINISH your turn. Do NOT hand off to any agent again.
+    3. TERMINATE AFTER COMMENTARY: After a sub-agent returns data for a single-step request,
+    write at most a brief 1-2 sentence interpretive note about the data, then FINISH your turn.
+    Do NOT hand off to any agent again.
 
     4. For MULTI-STEP requests (e.g. 'find similar molecules to semaglutide'), route to
     DIFFERENT agents in sequence — never the same agent twice.
