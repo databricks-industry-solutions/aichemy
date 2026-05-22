@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 import time
+import contextvars
 from databricks.sdk import WorkspaceClient
 from base64 import b64decode
 import mlflow
@@ -12,6 +13,30 @@ import asyncio
 import logging
 
 logger = logging.getLogger(__name__)
+
+_FAKE_ID_PREFIX = "resp_placeholder_"
+
+
+def replace_fake_id(obj, real_id: str):
+    """Replace temporary stream response IDs with the real AgentServer ID."""
+    if isinstance(obj, dict):
+        return {k: replace_fake_id(v, real_id) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [replace_fake_id(item, real_id) for item in obj]
+    if isinstance(obj, str) and obj.startswith(_FAKE_ID_PREFIX):
+        return real_id
+    return obj
+
+# Maps tool_name -> mcp_server_name (e.g. "search_pubmed" -> "pubmed").
+# Populated at agent startup so tool wrappers know which server owns each tool.
+_tool_server_map: dict[str, str] = {}
+
+# Per-request set of disabled MCP server names.
+# Set by responses_agent._predict_stream_async; tool wrappers hard-block any
+# call whose server is in this set.
+_disabled_mcps_ctx: contextvars.ContextVar[frozenset] = contextvars.ContextVar(
+    "disabled_mcps", default=frozenset()
+)
 
 
 def load_config(file=None):
@@ -80,24 +105,32 @@ def get_secret_from_cfg(cfg) -> tuple[str | None, str | None]:
     return client_id, client_secret
 
 
-def init_workspace_client(cfg):
-    # SP login takes precedence over PAT/profile login (for Lakebase writes)
-    client_id, client_secret = get_secret_from_cfg(cfg)
-    if client_id and client_secret:
-        try:
-            ws_client = WorkspaceClient(
-                host=cfg["host"], client_id=client_id, client_secret=client_secret
-            )
-            print(f"Workspace client initialized with SP: {client_id}")
-        except Exception as e:
-            print(
-                f"Error initializing workspace client with SP. Using WorkspaceClient() instead: {e}"
-            )
-            ws_client = WorkspaceClient()
+def init_workspace_client(cfg, SP=False):
+    if not SP:
+        profile = os.environ.get("DATABRICKS_PROFILE")
+        if profile:
+            return WorkspaceClient(profile=profile)
+        else:
+            # Running inside Databricks Apps — use default SDK auth
+            return WorkspaceClient()
     else:
-        logger.warning("Service Principal credentials not in config.yml. Defaulting to WorkspaceClient()")
-        ws_client = WorkspaceClient()
-    return ws_client
+        client_id, client_secret = get_secret_from_cfg(cfg)
+        if client_id and client_secret:
+            try:
+                print(f"Workspace client initialized with SP: {client_id}")
+                return WorkspaceClient(
+                    host=cfg["host"], 
+                    client_id=client_id, 
+                    client_secret=client_secret
+                )
+            except Exception as e:
+                print(
+                    f"Error initializing workspace client with SP. Using WorkspaceClient() instead: {e}"
+                )
+                return WorkspaceClient()
+        else:
+            logger.warning("Service Principal credentials not in config.yml. Defaulting to WorkspaceClient()")
+            return WorkspaceClient()
 
 
 def get_trace(trace_id: str, retries: int = 5, delay: float = 2.0):
@@ -180,13 +213,16 @@ def _log_exception_group(exc: BaseException, server_names: str = "") -> None:
         logger.error("  %sMCP root cause: %s: %s", prefix, type(exc).__name__, exc)
 
 
-def build_mcp_list(cfg, ws_client=None):
+def build_mcp_list(cfg, ws_client=WorkspaceClient()):
     """Build a list of MCP server objects from config.yml sections.
 
-    Reads ``uc_connections`` (-> DatabricksMCPServer via the workspace proxy)
-    and ``external_mcp`` (-> MCPServer with direct URLs).  Glama.ai endpoints
-    get an Authorization header automatically via ``get_secret``.
+    Reads three config sections:
 
+    * ``uc_connections``  -> DatabricksMCPServer via the workspace UC proxy
+    * ``external_mcp``    -> MCPServer with direct URLs (e.g. Glama.ai)
+    * ``custom_mcp``      -> DatabricksMCPServer for custom MCP servers hosted
+      as Databricks Apps (see https://docs.databricks.com/aws/en/generative-ai/mcp/custom-mcp).
+      Each entry requires a ``url`` (the app's ``/mcp`` endpoint). 
     Returns a list suitable for ``DatabricksMultiServerMCPClient(mcp_list)``.
     """
     from databricks_langchain import DatabricksMCPServer, MCPServer
@@ -194,23 +230,7 @@ def build_mcp_list(cfg, ws_client=None):
     servers = []
     host = cfg.get("host", "").rstrip("/") + "/"
 
-    for name, conn_name in cfg.get("uc_connections", {}).items():
-        if ws_client is None:
-            logger.warning(
-                "ws_client is None, using WorkspaceClient() instead for %s", name
-            )
-            ws_client = WorkspaceClient()
-
-        servers.append(
-            DatabricksMCPServer(
-                name=name,
-                url=f"{host}api/2.0/mcp/external/{conn_name}",
-                workspace_client=ws_client,
-                timeout=60,
-                terminate_on_close=False,
-            )
-        )
-
+    # --- External (non-Databricks) MCP servers ---
     for name, mcp_cfg in cfg.get("external_mcp", {}).items():
         url = mcp_cfg["url"]
         kwargs = dict(name=name, url=url, timeout=60, terminate_on_close=False)
@@ -221,11 +241,53 @@ def build_mcp_list(cfg, ws_client=None):
             print(f"Getting bearer token from scope {mcp_cfg.get('scope')} and secret {mcp_cfg.get('secret')}")
         servers.append(MCPServer(**kwargs))
 
+    # --- UC connection proxy servers ---
+    for name, conn_name in cfg.get("uc_connections", {}).items():
+        servers.append(
+            DatabricksMCPServer(
+                name=name,
+                url=f"{host}api/2.0/mcp/external/{conn_name}",
+                workspace_client=ws_client,
+                timeout=60,
+                terminate_on_close=False,
+            )
+        )
+
+    # --- Custom MCP servers hosted as Databricks Apps ---
+    # Auth priority: profile > SP credentials (scope) > default ws_client.
+    # Use ``profile`` for local dev (U2M OAuth, like ``databricks auth login``).
+    # Use ``scope``/``client_id``/``secret`` for deployed SP M2M auth.
+    for name, mcp_cfg in cfg.get("custom_mcp", {}).items():
+        # client_id, client_secret = get_secret_from_cfg(cfg)
+
+        custom_ws = WorkspaceClient(
+            # host=host,
+            # client_id=client_id,
+            # client_secret=client_secret,
+            # auth_type="oauth-m2m"
+        )
+        logger.info("Custom MCP '%s' using OAuth", name)
+
+        servers.append(
+            DatabricksMCPServer(
+                name=name,
+                url=mcp_cfg["url"],
+                workspace_client=custom_ws
+            )
+        )
+
     return servers
 
 
-def _load_mcp_tools_individually(servers, max_retries: int = 3) -> list:
-    """Try loading tools from each MCP server with retries; skip persistent failures."""
+def _load_mcp_tools_individually(
+    servers, max_retries: int = 3, server_map: dict | None = None
+) -> list:
+    """Try loading tools from each MCP server with retries; skip persistent failures.
+
+    If *server_map* is provided it is updated in-place with
+    ``{tool_name: server_name}`` entries so callers can look up which
+    server owns a given tool at request time.
+    """
     from databricks_langchain import DatabricksMultiServerMCPClient
 
     all_tools = []
@@ -242,6 +304,9 @@ def _load_mcp_tools_individually(servers, max_retries: int = 3) -> list:
                     attempt,
                 )
                 all_tools.extend(tools)
+                if server_map is not None:
+                    for t in tools:
+                        server_map[t.name] = srv.name
                 loaded = True
                 break
             except BaseException as e:
@@ -260,7 +325,7 @@ def _load_mcp_tools_individually(servers, max_retries: int = 3) -> list:
                     logger.warning(
                         "  ✗ %s: failed after %d attempts", srv.name, max_retries
                     )
-    logger.info("MCP fallback complete: %d total tools loaded", len(all_tools))
+    logger.info("MCP tools loaded: %d total across %d servers", len(all_tools), len(servers))
     return all_tools
 
 
@@ -386,6 +451,10 @@ def wrap_mcp_tools_with_resilience(tools, max_concurrent=2, call_delay=1.0):
     concurrent calls via a semaphore and inserting a delay after each call.
     Errors are returned as strings so the LLM can adapt rather than crashing
     the entire agent stream.
+
+    Also hard-blocks calls to MCP servers the user has disabled in the sidebar,
+    using the per-request ``_disabled_mcps_ctx`` ContextVar and the startup-time
+    ``_tool_server_map`` to identify which server each tool belongs to.
     """
     sem = asyncio.Semaphore(max_concurrent)
 
@@ -397,11 +466,22 @@ def wrap_mcp_tools_with_resilience(tools, max_concurrent=2, call_delay=1.0):
         async def _wrapped(
             *args, _orig=orig, _name=name, _tuple=expects_tuple, **kwargs
         ):
+            # Hard-block if the owning server is disabled for this request.
+            disabled = _disabled_mcps_ctx.get()
+            if disabled:
+                srv = _tool_server_map.get(_name)
+                if srv and srv in disabled:
+                    msg = (
+                        f"Tool '{_name}' is unavailable: the '{srv}' data source has been "
+                        f"disabled in the sidebar. Re-enable it and refresh to use this tool."
+                    )
+                    logger.info("Blocked disabled MCP tool '%s' (server='%s')", _name, srv)
+                    return (msg, None) if _tuple else msg
+
             async with sem:
                 try:
                     result = await _orig(*args, **kwargs)
                     await asyncio.sleep(call_delay)
-                    #return result
                     return _strip_lc_ids(result)
                 except Exception as e:
                     logger.error(

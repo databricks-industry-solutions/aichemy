@@ -1,32 +1,32 @@
 import { useState, useEffect, useMemo } from 'react'
 import { fetchSkills } from '../api/agentAPI'
-import toolsTsv from '../../tools.txt?raw'
+import modelsTxt from '/models.txt?raw'
 
-const GROUP_LABELS = {
-  'PubChem': '🧪 PubChem MCP',
-  'OpenTargets': '🎯 OpenTargets MCP',
-  'PubMed': '📚 PubMed MCP',
-  'Chem Utils': '🛠️ Chem Utilities',
-  'ZINC': '🔍 ZINC Vector Search',
+// Display names for all agent component keys returned by the backend
+const MCP_DISPLAY = {
+  // external_mcp
+  pubchem:               '🧪 PubChem',
+  pubmed:                '📚 PubMed',
+  // custom_mcp
+  opentargets:           '🎯 OpenTargets',
+  // uc_connections
+  clinical_trials:        '🏥 ClinicalTrials',
+  US_census:              '🇺🇸 US Census',
+  atropos:               '🩺 Atropos',
+  // retriever
+  zinc_molecular_search: '🔍 ZINC Search',
+  // genie
+  drugbank:              '💊 DrugBank',
+  // uc_functions
+  chem_utils:            '🛠️ Chem Utils',
 }
 
-function parseToolsTsv(tsv) {
-  const groups = {}
-  for (const line of tsv.trim().split('\n').slice(1)) {
-    const parts = line.split('\t')
-    if (parts.length < 3) continue
-    const [agent, tool, desc] = parts.map(s => s.trim())
-    if (!groups[agent]) groups[agent] = []
-    groups[agent].push({ name: tool, description: desc })
-  }
-  return Object.entries(groups).map(([key, tools]) => ({
-    key,
-    label: GROUP_LABELS[key] || `🔧 ${key}`,
-    tools,
-  }))
-}
-
-const TOOL_GROUPS = parseToolsTsv(toolsTsv)
+// Load model list from public/models.txt
+const MODEL_OPTIONS = modelsTxt
+  .split('\n')
+  .map(l => l.trim())
+  .filter(Boolean)
+  .map(v => ({ value: v, label: v }))
 
 export default function Sidebar({
   projects = [],
@@ -40,10 +40,16 @@ export default function Sidebar({
   skillsEnabled,
   onToggleSkills,
   userInfo,
+  mcpServers = [],
+  enabledGroups = {},
+  onToggleGroup,
+  selectedModel = '',
+  onModelChange,
+  onRebuildAgent,
+  isRebuilding = false,
 }) {
   const [renamingId, setRenamingId] = useState(null)
   const [renameValue, setRenameValue] = useState('')
-  const [expandedGroup, setExpandedGroup] = useState(null)
   const [skills, setSkills] = useState({})
 
   useEffect(() => {
@@ -89,10 +95,6 @@ export default function Sidebar({
     if (window.confirm('Delete this project? This cannot be undone.')) {
       onDeleteProject(projectId)
     }
-  }
-
-  const toggleGroup = (key) => {
-    setExpandedGroup(expandedGroup === key ? null : key)
   }
 
   return (
@@ -178,31 +180,59 @@ export default function Sidebar({
       </div>
       <div className="sidebar-divider" />
 
-      {/* Available Tools */}
-      <div className="sidebar-caption">Available tools</div>
-      <div className="tools-list">
-        {TOOL_GROUPS.map(({ key, label, tools: groupTools }) => (
-          <div key={key} className="tool-group">
-            <button
-              className={`tool-group-header${expandedGroup === key ? ' expanded' : ''}`}
-              onClick={() => toggleGroup(key)}
-            >
-              <span>{label}</span>
-              <span className="chevron">{expandedGroup === key ? '▾' : '▸'}</span>
-            </button>
-            {expandedGroup === key && groupTools.length > 0 && (
-              <div className="tool-group-items">
-                {groupTools.map((t) => (
-                  <div key={t.name} className="tool-item">
-                    <span className="tool-item-name">{t.name}</span>
-                    {t.description && <span className="tool-item-desc">{t.description}</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
+      {/* Agent configuration: model + MCP + rebuild */}
+      <div className="sidebar-caption">Settings</div>
+
+      {/* Model selector */}
+      <div className="model-selector-row">
+        <select
+          className="model-selector"
+          value={selectedModel}
+          onChange={e => onModelChange?.(e.target.value)}
+        >
+          {!MODEL_OPTIONS.find(m => m.value === selectedModel) && selectedModel && (
+            <option value={selectedModel}>{selectedModel}</option>
+          )}
+          {MODEL_OPTIONS.map(m => (
+            <option key={m.value} value={m.value}>{m.label}</option>
+          ))}
+        </select>
       </div>
+
+      {/* Data Sources (MCP servers) */}
+      <div className="mcp-list">
+        {mcpServers.length === 0 && (
+          <div className="mcp-item-empty">Loading…</div>
+        )}
+        {mcpServers.map(srv => {
+          const isEnabled = enabledGroups[srv] !== false
+          return (
+            <label
+              key={srv}
+              className={`mcp-item${!isEnabled ? ' mcp-item-off' : ''}`}
+            >
+              <input
+                type="checkbox"
+                checked={isEnabled}
+                onChange={e => onToggleGroup?.(srv, e.target.checked)}
+              />
+              <span className="mcp-item-label">
+                {MCP_DISPLAY[srv] || srv}
+              </span>
+            </label>
+          )
+        })}
+      </div>
+
+      {/* Rebuild button — directly under MCP servers */}
+      <button
+        className={`rebuild-button${isRebuilding ? ' rebuilding' : ''}`}
+        onClick={onRebuildAgent}
+        disabled={isRebuilding}
+        title="Rebuild the agent with the selected model and data sources"
+      >
+        {isRebuilding ? '⟳ Refreshing…' : '⟳ Refresh'}
+      </button>
 
       <div className="sidebar-spacer" />
     </aside>

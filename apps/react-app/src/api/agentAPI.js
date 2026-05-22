@@ -33,18 +33,34 @@ export async function askAgent(inputDict) {
 
 /**
  * Call the streaming agent endpoint. Yields SSE events as they arrive.
+ *
+ * Handles both legacy (batch tool_calls/genie after stream) and new inline
+ * tool call events (tool_call_start, tool_call_args_delta, tool_call_done,
+ * tool_call_result) for immediate agent activity feedback.
+ *
  * @param {Object} inputDict - Input dictionary with messages and custom inputs
- * @param {AbortSignal} [signal] - Optional abort signal
- * @param {function} onText - Called with each text chunk: onText(chunk)
- * @param {function} [onToolCalls] - Called with tool calls array
- * @param {function} [onGenie] - Called with genie results array
- * @param {function} [onTraceId] - Called with MLflow trace_id when present (for linking to traces)
- * @param {function} [onStatus] - Called with status message string
- * @param {function} [onError] - Called with error string
- * @param {function} [onDone] - Called when stream completes
+ * @param {Object} callbacks
+ * @param {AbortSignal} [callbacks.signal] - Optional abort signal
+ * @param {function} callbacks.onText - Called with each text chunk
+ * @param {function} [callbacks.onToolCallStart] - Called when a tool call begins: {id, call_id, name, arguments}
+ * @param {function} [callbacks.onToolCallDone] - Called when a tool call completes: {id, call_id, name, arguments}
+ * @param {function} [callbacks.onToolCallResult] - Called with tool result: {call_id, output}
+ * @param {function} [callbacks.onToolCalls] - Legacy: called with batch tool calls array (from trace)
+ * @param {function} [callbacks.onGenie] - Called with genie results
+ * @param {function} [callbacks.onTraceId] - Called with MLflow trace_id
+ * @param {function} [callbacks.onStatus] - Called with status message string
+ * @param {function} [callbacks.onError] - Called with error string
+ * @param {function} [callbacks.onDone] - Called when stream completes
  */
-export async function askAgentStream(inputDict, { signal, onText, onToolCalls, onGenie, onTraceId, onStatus, onError, onDone } = {}) {
+export async function askAgentStream(inputDict, {
+  signal, onText, onToolCallStart, onToolCallDone, onToolCallResult,
+  onToolCalls, onGenie, onTraceId, onStatus, onError, onDone,
+} = {}) {
   const url = `${API_BASE_URL}/api/agent/stream`
+  const streamedTextItemIds = new Set()
+  const emittedFinalTexts = new Set()
+
+  onStatus?.('Thinking...')
 
   const response = await fetch(url, {
     method: 'POST',
@@ -68,19 +84,95 @@ export async function askAgentStream(inputDict, { signal, onText, onToolCalls, o
 
     buffer += decoder.decode(value, { stream: true })
     const lines = buffer.split('\n')
-    buffer = lines.pop() // keep incomplete line in buffer
+    buffer = lines.pop()
 
     for (const line of lines) {
       if (!line.startsWith('data: ')) continue
       const dataStr = line.slice(6)
+      if (dataStr === '[DONE]') {
+        onDone?.()
+        return
+      }
       try {
         const event = JSON.parse(dataStr)
         switch (event.type) {
+          // Official ResponsesAgent stream events from AgentServer.
+          case 'response.output_text.delta': {
+            const delta = event.delta || ''
+            if (delta) {
+              if (event.item_id) streamedTextItemIds.add(event.item_id)
+              onText?.(delta)
+            }
+            break
+          }
+          case 'response.output_item.added': {
+            const item = event.item || {}
+            if (item.type === 'function_call') {
+              onToolCallStart?.({
+                id: item.id || '',
+                call_id: item.call_id || '',
+                name: item.name || '',
+                arguments: item.arguments || '',
+              })
+            }
+            break
+          }
+          case 'response.function_call_arguments.delta':
+            break
+          case 'response.content_part.done': {
+            const text = event.part?.text || ''
+            if (text && event.item_id && !streamedTextItemIds.has(event.item_id)) {
+              streamedTextItemIds.add(event.item_id)
+              onText?.(text)
+            }
+            break
+          }
+          case 'response.output_item.done': {
+            const item = event.item || {}
+            if (item.type === 'function_call') {
+              onToolCallDone?.({
+                id: item.id || '',
+                call_id: item.call_id || '',
+                name: item.name || '',
+                arguments: item.arguments || '',
+              })
+            } else if (item.type === 'function_call_output') {
+              onToolCallResult?.({
+                call_id: item.call_id || '',
+                output: item.output || '',
+              })
+            } else if (item.type === 'message' && !streamedTextItemIds.has(item.id)) {
+              const text = extractMessageItemText(item)
+              if (text && !emittedFinalTexts.has(text)) {
+                emittedFinalTexts.add(text)
+                onText?.(text)
+              }
+            }
+            break
+          }
+          case 'response.completed':
+            if (event.response?.metadata?.trace_id) {
+              onTraceId?.(event.response.metadata.trace_id)
+            }
+            break
+
+          // Compatibility with the previous AiChemy custom SSE format.
           case 'text':
             onText?.(event.content)
             break
           case 'status':
             onStatus?.(event.content)
+            break
+          case 'tool_call_start':
+            onToolCallStart?.(event.data)
+            break
+          case 'tool_call_done':
+            onToolCallDone?.(event.data)
+            break
+          case 'tool_call_result':
+            onToolCallResult?.(event.data)
+            break
+          case 'tool_call_args_delta':
             break
           case 'tool_calls':
             onToolCalls?.(event.data)
@@ -92,7 +184,7 @@ export async function askAgentStream(inputDict, { signal, onText, onToolCalls, o
             onTraceId?.(event.trace_id)
             break
           case 'error':
-            onError?.(event.content)
+            onError?.(event.content || event.error?.message || JSON.stringify(event.error || event))
             break
           case 'done':
             onDone?.()
@@ -104,6 +196,19 @@ export async function askAgentStream(inputDict, { signal, onText, onToolCalls, o
     }
   }
   onDone?.()
+}
+
+export function extractMessageItemText(item) {
+  const parts = []
+  for (const part of item?.content || []) {
+    if (typeof part === 'string') {
+      parts.push(part)
+    } else if (part && typeof part === 'object') {
+      const text = part.text || part.content
+      if (text) parts.push(text)
+    }
+  }
+  return parts.join('\n')
 }
 
 /**
@@ -167,6 +272,40 @@ export async function fetchUserInfo() {
     // fall through to defaults
   }
   return { user_name: null, user_email: null, user_id: null }
+}
+
+/**
+ * Fetch the current agent configuration (llm_endpoint, mcp_servers, enabled_mcps).
+ * @returns {Promise<{llm_endpoint: string, mcp_servers: string[], enabled_mcps: string[]}>}
+ */
+export async function fetchAgentConfig() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/config`)
+    if (response.ok) return response.json()
+  } catch {
+    // ignore
+  }
+  return { llm_endpoint: '', mcp_servers: [], enabled_mcps: [] }
+}
+
+/**
+ * Trigger an agent rebuild with new model and/or MCP selection.
+ * Returns immediately; poll fetchAgentStatus() to know when ready.
+ * @param {{llmEndpoint?: string, enabledMcps?: string[]}} options
+ * @returns {Promise<{ok: boolean, detail: string}>}
+ */
+export async function rebuildAgent({ llmEndpoint, enabledMcps } = {}) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/agent/rebuild`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ llm_endpoint: llmEndpoint, enabled_mcps: enabledMcps }),
+    })
+    if (response.ok) return response.json()
+    return { ok: false, detail: `HTTP ${response.status}` }
+  } catch (e) {
+    return { ok: false, detail: e.message }
+  }
 }
 
 /**

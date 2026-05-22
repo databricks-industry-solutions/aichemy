@@ -16,10 +16,10 @@ uc_functions:
   chem_utils:
     - healthcare_lifesciences.qsar.get_embedding
     - healthcare_lifesciences.qsar.molecule_png_url
-# uc_connections:
-#   pubchem: conn_aichemy_pubchem
-#   pubmed: conn_aichemy_pubmed
-#   opentargets: conn_aichemy_opentargets
+uc_connections:
+  clinical_trials: conn_clinicaltrials
+  US_census: conn_hls_mcp
+#  atropos: conn_atropos_mcp
 external_mcp:
   pubchem: 
     url: https://glama.ai/endpoints/xb306rnopq/mcp
@@ -29,8 +29,9 @@ external_mcp:
     url: https://glama.ai/endpoints/mp1ke6xrpi/mcp
     scope: aichemy
     secret: pubmed_glama_api
-  opentargets: 
-    url: https://mcp.platform.opentargets.org/mcp
+custom_mcp:
+  opentargets:
+    url: https://opentargets-mcp-2556758628403379.aws.databricksapps.com/mcp
 retriever:
   zinc_molecular_search:
     vs_endpoint: dbdemos_vs_endpoint
@@ -70,7 +71,8 @@ prompts:
     You are a multi-MCP server agent connected to:
     1. PubChem MCP server that provides everything about chemical compounds
     2. PubMed MCP server that searches biomedical literature and retrieves free full text if any.
-    3. OpenTargets MCP server that provides everything about drug targets and their associations with diseases and drugs.
+    3. OpenTargets MCP server that queries the Open Targets Platform for target-disease associations,
+    drug mechanisms, genetic evidence, and more via GraphQL.
     Most PubChem tools (e.g. get_compound_info) except for search_compounds expect a CID.
   memory: >-
     You save and delete long-term user memories. Save when the user explicitly
@@ -103,15 +105,18 @@ prompts:
 
     CRITICAL RULES — FOLLOW EXACTLY:
     1. PASS THROUGH RESULTS: When a sub-agent returns data (tables, query results, search results),
-    that IS the final answer. Tables and structured data do NOT need summarisation.
-    NEVER fabricate, extend, or add rows/data that were not in the sub-agent's output.
+    include it verbatim in the final answer. You MAY add a brief 1-2 sentence interpretive note
+    AFTER the data (e.g. "These are the 5 BRAF inhibitors in DrugBank, ordered by approval year.")
+    to give the user context, but you must NEVER fabricate, extend, modify, or add rows/data that
+    were not in the sub-agent's output. Do not summarise the table itself row-by-row.
 
     2. ONE CALL PER AGENT PER STEP: NEVER route to the same agent twice for the same sub-task.
     Once an agent returns a result, that result is COMPLETE. Do NOT re-route to the same agent
     to rephrase, summarise, or improve the answer unless another tool is required.
 
-    3. TERMINATE IMMEDIATELY: After a sub-agent returns data for a single-step request,
-    FINISH your turn. Do NOT hand off to any agent again.
+    3. TERMINATE AFTER COMMENTARY: After a sub-agent returns data for a single-step request,
+    write at most a brief 1-2 sentence interpretive note about the data, then FINISH your turn.
+    Do NOT hand off to any agent again.
 
     4. For MULTI-STEP requests (e.g. 'find similar molecules to semaglutide'), route to
     DIFFERENT agents in sequence — never the same agent twice.

@@ -1,17 +1,18 @@
 """
-Backend proxy server for AiChemy React app.
-Handles Databricks authentication, proxies requests to the agent endpoint,
+Backend server for AiChemy React app.
+Handles Databricks authentication, proxies AgentServer streaming,
 and persists project metadata to Lakebase Autoscaling Postgres.
 
 Long-term user memory (facts, preferences) is handled separately by the agent
 backend via AsyncDatabricksStore (LangGraph postgres store).
 
-The agent endpoint (POST /invocations) is served by agent/start_server.py (MLflow AgentServer).
-Port is set via AGENT_PORT (default 8080). Run separately: python agent/start_server.py --port <AGENT_PORT>
+The AgentServer at AGENT_PORT owns the ResponsesAgent streaming contract.
 """
 
 import os
 import json
+import logging
+import httpx
 import requests
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -20,6 +21,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from databricks.sdk import WorkspaceClient
 import sys
+
+logger = logging.getLogger(__name__)
 
 _app_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_app_root))
@@ -41,6 +44,7 @@ from server.dataclass import (
     AgentRequest,
     CreateProjectRequest,
     UpdateProjectRequest,
+    RebuildRequest,
 )
 
 load_env_from_app_yaml()
@@ -86,7 +90,7 @@ db = ProjectDB()
 
 # Agent server settings
 AGENT_PORT = os.getenv("AGENT_PORT", "8080")
-AGENT_URL = f"http://0.0.0.0:{AGENT_PORT}/invocations"
+AGENT_URL = f"http://127.0.0.1:{AGENT_PORT}/invocations"
 AGENT_CONNECT_TIMEOUT = int(os.getenv("AGENT_CONNECT_TIMEOUT", "30"))
 AGENT_READ_TIMEOUT = int(os.getenv("AGENT_READ_TIMEOUT", "600"))
 AGENT_REQUEST_TIMEOUT = AGENT_CONNECT_TIMEOUT + AGENT_READ_TIMEOUT
@@ -102,157 +106,78 @@ async def get_user(request: Request):
     """Return the current user identity (from proxy headers or SDK auth)."""
     return resolve_user_from_request(request, _get_workspace_client)
 
-
 @app.post("/api/agent/stream")
 async def call_agent_stream(request: AgentRequest):
-    """Stream agent response as Server-Sent Events (SSE)."""
+    """Stream official AgentServer SSE events through the web app.
+
+    Uses httpx.AsyncClient for true async streaming and sets headers that tell the
+    Databricks Apps reverse proxy not to buffer the SSE response (without these,
+    the proxy holds the entire response until upstream closes, defeating streaming).
+    """
 
     def _sse(event: dict) -> str:
         return f"data: {json.dumps(event)}\n\n"
 
-    def stream_generator():
+    messages_raw = [{"role": msg.role, "content": msg.content} for msg in request.input]
+    if request.skill_name and messages_raw:
+        last_msg = messages_raw[-1]
+        enhanced = build_prompt_with_skill(last_msg["content"], request.skill_name)
+        messages_raw[-1] = {"role": last_msg["role"], "content": enhanced}
+
+    custom_inputs = {"thread_id": request.custom_inputs.thread_id}
+    if request.custom_inputs.user_id:
+        custom_inputs["user_id"] = request.custom_inputs.user_id
+    if request.custom_inputs.enabled_mcps is not None:
+        custom_inputs["enabled_mcps"] = request.custom_inputs.enabled_mcps
+
+    payload = {
+        "input": [{"role": m["role"], "content": m["content"]} for m in messages_raw],
+        "custom_inputs": custom_inputs,
+        "stream": True,
+    }
+
+    async def stream_generator():
         try:
-            messages = [{"role": msg.role, "content": msg.content} for msg in request.input]
-            if request.skill_name and messages:
-                last_msg = messages[-1]
-                enhanced = build_prompt_with_skill(last_msg["content"], request.skill_name)
-                messages[-1] = {"role": last_msg["role"], "content": enhanced}
+            timeout = httpx.Timeout(AGENT_READ_TIMEOUT, connect=AGENT_CONNECT_TIMEOUT)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", AGENT_URL, json=payload) as resp:
+                    if resp.status_code >= 400:
+                        body = await resp.aread()
+                        yield _sse({
+                            "type": "error",
+                            "error": {
+                                "message": body.decode("utf-8", "replace"),
+                                "type": "agent_server_error",
+                                "code": str(resp.status_code),
+                            },
+                        })
+                        return
 
-            custom_inputs = {"thread_id": request.custom_inputs.thread_id}
-            if request.custom_inputs.user_id:
-                custom_inputs["user_id"] = request.custom_inputs.user_id
+                    async for line in resp.aiter_lines():
+                        if line:
+                            yield f"{line}\n\n"
 
-            input_dict = {"input": messages, "custom_inputs": custom_inputs, "stream": True}
-
-            print(f"Input_dict: {input_dict}")
-            w = _get_workspace_client()
-            headers = w.config.authenticate()
-            headers["Content-Type"] = "application/json"
-            headers["x-mlflow-return-trace-id"] = "true"
-
-            yield _sse({"type": "status", "content": "Waiting for agent..."})
-
-            try:
-                resp = requests.post(
-                    url=AGENT_URL, headers=headers, json=input_dict,
-                    timeout=AGENT_REQUEST_TIMEOUT, stream=True,
-                )
-            except requests.exceptions.Timeout:
-                yield _sse({"type": "error", "content": f"Agent request timed out after {AGENT_READ_TIMEOUT}s. Try again or increase AGENT_READ_TIMEOUT."})
-                return
-
-            if resp.status_code != 200:
-                body = resp.text if not resp.raw.closed else ""
-                yield _sse({"type": "error", "content": f"{resp.status_code}: {body[:500]}"})
-                return
-
-            yield _sse({"type": "status", "content": "Streaming response..."})
-
-            is_new_thread = request.new_thread is True
-            accumulated_output = []
-            trace_id = None
-
-            seen_event_types = []
-            for line in resp.iter_lines(decode_unicode=True):
-                if line is None:
-                    continue
-                line = line.strip()
-                if not line.startswith("data: "):
-                    continue
-                payload = line[6:].strip()
-                if not payload or payload == "[DONE]":
-                    if payload == "[DONE]":
-                        break
-                    continue
-                try:
-                    event = json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
-
-                ev_type = event.get("type")
-                seen_event_types.append(ev_type)
-                if ev_type == "response.output_item.done":
-                    item = event.get("item")
-                    if item:
-                        accumulated_output.append(item)
-                        if is_new_thread:
-                            yield from stream_new_content(item, _sse)
-                elif ev_type == "error":
-                    yield _sse({"type": "error", "content": event.get("message", str(event))})
-                    return
-                elif "trace_id" in event:
-                    trace_id = event["trace_id"]
-
-            print(f"[stream] SSE event types received: {seen_event_types}")
-            print(f"[stream] accumulated_output items: {len(accumulated_output)}, trace_id: {trace_id}")
-
-            if not is_new_thread and accumulated_output:
-                last_msg = next(
-                    (it for it in reversed(accumulated_output)
-                     if it.get("type") == "message"
-                     and any(b.get("type") == "output_text" for b in it.get("content") or [])),
-                    accumulated_output[-1],
-                )
-                yield from stream_new_content(last_msg, _sse)
-
-            if trace_id:
-                print(f"trace_id: {trace_id}")
-                yield _sse({"type": "trace_id", "trace_id": trace_id})
-
-            if not accumulated_output and trace_id:
-                yield from _fallback_from_trace(trace_id, _sse)
-            elif not accumulated_output:
-                yield _sse({"type": "error", "content": "Agent stream ended without producing output. Check agent logs for details."})
-            elif trace_id:
-                yield from _enrich_from_trace(trace_id, _sse)
-
-        except requests.exceptions.ConnectionError as e:
-            yield _sse({"type": "error", "content": f"Lost connection to agent server: {e}"})
         except Exception as e:
-            yield _sse({"type": "error", "content": f"{type(e).__name__}: {e}"})
+            logger.exception("Error proxying AgentServer stream")
+            yield _sse({
+                "type": "error",
+                "error": {
+                    "message": f"{type(e).__name__}: {e}",
+                    "type": "server_error",
+                    "code": "stream_proxy_error",
+                },
+            })
+        yield "data: [DONE]\n\n"
 
-        yield f"data: {json.dumps({'type': 'done'})}\n\n"
-
-    return StreamingResponse(stream_generator(), media_type="text/event-stream")
-
-
-def _fallback_from_trace(trace_id: str, _sse):
-    """When SSE produced no output, extract response text from the trace."""
-    print(f"[stream] No output from SSE events, falling back to trace extraction...")
-    try:
-        trace = get_trace(trace_id, retries=5, delay=2.0)
-        if trace:
-            trace_dict = serialize_trace(trace)
-            parsed = parse_trace_for_ui(trace_dict)
-            if parsed["tool_calls"]:
-                yield _sse({"type": "tool_calls", "data": parsed["tool_calls"]})
-            if parsed["genie_results"]:
-                yield _sse({"type": "genie", "data": parsed["genie_results"]})
-            fallback_text = extract_text_from_trace(trace_dict)
-            if fallback_text:
-                yield _sse({"type": "text", "content": fallback_text})
-            else:
-                yield _sse({"type": "error", "content": "Agent produced a trace but no readable output was found."})
-        else:
-            yield _sse({"type": "error", "content": "Agent stream ended without producing output. Check agent logs for details."})
-    except Exception as e:
-        print(f"[stream] Failed to parse trace {trace_id}: {e}")
-        yield _sse({"type": "error", "content": f"Failed to extract output from trace: {e}"})
-
-
-def _enrich_from_trace(trace_id: str, _sse):
-    """Normal path: SSE worked, parse trace for tool_calls/genie metadata."""
-    try:
-        trace = get_trace(trace_id, retries=3, delay=1.0)
-        if trace:
-            parsed = parse_trace_for_ui(serialize_trace(trace))
-            print(f"parsed: {parsed}")
-            if parsed["tool_calls"]:
-                yield _sse({"type": "tool_calls", "data": parsed["tool_calls"]})
-            if parsed["genie_results"]:
-                yield _sse({"type": "genie", "data": parsed["genie_results"]})
-    except Exception as e:
-        print(f"[stream] Failed to parse trace {trace_id}: {e}")
+    return StreamingResponse(
+        stream_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/api/trace/{trace_id}")
@@ -309,6 +234,39 @@ async def delete_project(project_id: str):
 
 
 # -- Tools, Skills, Health --------------------------------------------------
+
+
+@app.get("/api/config")
+async def get_agent_config():
+    """Return the current agent config (llm_endpoint, available & enabled MCP servers)."""
+    try:
+        resp = requests.get(f"http://0.0.0.0:{AGENT_PORT}/agent-config", timeout=5)
+        if resp.status_code == 200:
+            return resp.json()
+    except Exception:
+        pass
+    # Fallback: derive from config.yml directly
+    cfg = load_config() or {}
+    all_mcps = list(cfg.get("external_mcp", {}).keys()) + list(cfg.get("custom_mcp", {}).keys())
+    return {
+        "llm_endpoint": cfg.get("llm_endpoint", ""),
+        "mcp_servers": all_mcps,
+        "enabled_mcps": all_mcps,
+    }
+
+
+@app.post("/api/agent/rebuild")
+async def rebuild_agent(req: RebuildRequest):
+    """Trigger an agent rebuild with new LLM and/or MCP selection."""
+    try:
+        resp = requests.post(
+            f"http://0.0.0.0:{AGENT_PORT}/agent-rebuild",
+            json={"llm_endpoint": req.llm_endpoint, "enabled_mcps": req.enabled_mcps},
+            timeout=10,
+        )
+        return resp.json()
+    except Exception as e:
+        return {"ok": False, "detail": str(e)}
 
 
 @app.get("/api/tools")

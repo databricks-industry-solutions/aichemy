@@ -12,6 +12,7 @@ class Message(BaseModel):
 class CustomInputs(BaseModel):
     thread_id: str
     user_id: Optional[str] = None
+    enabled_mcps: Optional[List[str]] = None
 
 
 class AgentRequest(BaseModel):
@@ -30,3 +31,8 @@ class UpdateProjectRequest(BaseModel):
     name: Optional[str] = None
     messages: Optional[list] = None
     agent_steps: Union[list, dict, None] = None
+
+
+class RebuildRequest(BaseModel):
+    llm_endpoint: Optional[str] = None
+    enabled_mcps: Optional[List[str]] = None

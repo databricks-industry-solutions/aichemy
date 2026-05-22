@@ -1,7 +1,7 @@
 fastapi>=0.104.0
 uvicorn>=0.24.0
 mlflow>=3.3.2
-databricks-ai-bridge>=0.12.0
+databricks-ai-bridge[agent-server]>=0.18.0
 databricks-langchain[memory]>=0.17.0
 databricks-mcp
 databricks-vectorsearch
@@ -10,9 +10,14 @@ langchain-mcp-adapters==0.1.14
 # https://github.com/langchain-ai/langchain-mcp-adapters/issues/397
 databricks-sdk
 langchain-core>=1.2.7
-langgraph-supervisor
+# https://github.com/langchain-ai/langgraph/issues/7404
+langgraph==1.0.10
+langgraph-prebuilt==1.0.8
+langgraph-supervisor==0.0.31
 mcp>=1.22.0
 openai==2.14.0
 pydantic>=2.0.0
 PyYAML>=6.0
 psycopg[binary]>=3.1.0
+requests>=2.31.0
+httpx>=0.27.0
