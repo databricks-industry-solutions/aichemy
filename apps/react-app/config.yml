@@ -17,23 +17,25 @@ uc_functions:
     - healthcare_lifesciences.qsar.get_embedding
     - healthcare_lifesciences.qsar.molecule_png_url
 uc_connections:
+  pubmed: climb_hls_pubmed
+  bio/medrxiv: climb_hls_biorxiv
   clinical_trials: conn_clinicaltrials
-  US_census: conn_hls_mcp
+  openfda: climb_hls_openfda
+  US_census: climb_hls_census
+  cms: climb_hls_cms_coverage
+  bioportal: climb_hls_bioportal
+  biocontext: climb_hls_biocontext
 #  atropos: conn_atropos_mcp
 external_mcp:
   pubchem: 
     url: https://glama.ai/endpoints/xb306rnopq/mcp
     scope: aichemy
     secret: pubchem_glama_api
-  pubmed: 
-    url: https://glama.ai/endpoints/mp1ke6xrpi/mcp
-    scope: aichemy
-    secret: pubmed_glama_api
 custom_mcp:
   opentargets:
     url: https://opentargets-mcp-2556758628403379.aws.databricksapps.com/mcp
 retriever:
-  zinc_molecular_search:
+  zinc_vector_search:
     vs_endpoint: dbdemos_vs_endpoint
     vs_index: healthcare_lifesciences.qsar.zinc_vs
     vs_source: healthcare_lifesciences.qsar.zinc15_250k_full
@@ -47,7 +49,7 @@ retriever:
     - logp
     - purchasable
     search_type: vector
-    tool_description: Search for drug-like chemicals in the ZINC database based on ECFP molecular fingerprint embeddings
+    tool_description: Search for drug-like chemicals in the ZINC database based on 1024-bit ECFP molecular fingerprint embeddings
 lakebase:
   project_id: 605906e9-742e-4c1a-aef4-11f64b8a74c2
   branch_id: br-aged-scene-d1iq7b6x
@@ -62,18 +64,15 @@ example_questions:
   - Show me compounds similar to vemurafenib. Display their structures.
 prompts:
   chem_utils: >-
-    You are a python function that can generate ECFP molecular fingerprint embeddings
-    from SMILES and display molecule PNG images from the PubChem website by CID in markdown.
-  zinc_molecular_search: >-
-    Search for drug-like chemicals in the ZINC database based on ECFP molecular
-    fingerprint embeddings
+    You are a python function that can generate 1024-bit ECFP molecular fingerprint embeddings
+    from SMILES. Get the SMILES from the PubChem MCP server. Do not fabricate SMILES.
+    You also have the ability to display molecule image PNG files from PubChem website by CID in markdown.
+  zinc_vector_search: >-
+    You search the ZINC database of 250,000 drug-like chemicals for structural similarity.
+    Pass a SMILES string directly to your search tool, not the 1024-bit ECFP bitstring.
   mcp: >-
-    You are a multi-MCP server agent connected to:
-    1. PubChem MCP server that provides everything about chemical compounds
-    2. PubMed MCP server that searches biomedical literature and retrieves free full text if any.
-    3. OpenTargets MCP server that queries the Open Targets Platform for target-disease associations,
-    drug mechanisms, genetic evidence, and more via GraphQL.
-    Most PubChem tools (e.g. get_compound_info) except for search_compounds expect a CID.
+    You are a multi-MCP server agent connected to several knowledge bases via MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, etc.
+    Some of these MCP servers may be disabled in the UI so when listing tools, do check if the tool is disabled before listing it.
   memory: >-
     You save and delete long-term user memories. Save when the user explicitly
     asks to remember something. Proactively save durable preferences, roles,
@@ -81,23 +80,15 @@ prompts:
     short-lived facts. You do NOT need to retrieve memories — that happens
     automatically before the conversation starts.
   supervisor: >-
-    You are a supervisor managing 5 agents. Route to the agent required to fulfill the request.
+    You are a supervisor agent that handles the routing to the following agents depending on the request: 
+    1. chem utils agent with tools for computing 1024-bit ECFP and getting the molecule image PNG URL from PubChem,
+    2. ZINC vector search agent for similarity search by SMILES (1024-bit ECFP computed internally from SMILES input)
+    3. text-to-sql agent querying DrugBank for FDA-approved drugs and their properties
+    4. memory agent that saves and deletes long-term user memories
+    5. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, depending on whether they are enabled in the UI
+    Some of these agents or MCP servers may be disabled in the UI so when listing abilities, do check if the agent or MCP server is disabled before listing.
 
-    1. Drugbank agent: generates text-to-SQL queries to Drugbank of FDA-approved drugs and their properties
-
-    2. ZINC agent: searches for drug-like molecules and their properties from the ZINC database
-    based on ECFP4 molecular fingerprint embeddings represented as a 1024-char bitstring.
-
-    3. Chem utilities agent: display molecule image PNG files from PubChem website by CID in
-    markdown or compute ECFP4 molecular fingerprint embeddings in a 1024-char bitstring for a
-    given SMILES structure. If missing SMILES input, query it from a chemical name using the
-    PubChem MCP agent's search_compound tool.
-
-    4. MCP agent: connects to the PubChem, PubMed and OpenTargets MCP servers
-
-    5. Memory agent: saves or deletes long-term user memories. ONLY route here when the user
-    explicitly asks to "remember", "store", "note that", "from now on", "forget", or "delete memory".
-    User memories are already loaded automatically — do NOT route here to retrieve them.
+    Avoid relying on your trained knowledge. Always use the tools available to you. For example, look up the CID and SMILES from the PubChem MCP server.
 
     Because you are an autonomous multi-agent system, do not ask for more follow up information.
     Instead, use chain-of-thought to reason and break down the request into achievable steps
@@ -105,15 +96,19 @@ prompts:
 
     CRITICAL RULES — FOLLOW EXACTLY:
     1. PASS THROUGH RESULTS: When a sub-agent returns data (tables, query results, search results),
-    that IS the final answer. Tables and structured data do NOT need summarisation.
-    NEVER fabricate, extend, or add rows/data that were not in the sub-agent's output.
+    include it verbatim in the final answer. You MAY add a brief 1-2 sentence interpretive note
+    AFTER the data (e.g. "These are the 5 BRAF inhibitors in DrugBank, ordered by approval year.")
+    to give the user context, but you must NEVER fabricate, extend, modify, or add rows/data that
+    were not in the sub-agent's output. Do not summarise the table itself row-by-row.
 
-    2. ONE CALL PER AGENT PER STEP: NEVER route to the same agent twice for the same sub-task.
-    Once an agent returns a result, that result is COMPLETE. Do NOT re-route to the same agent
-    to rephrase, summarise, or improve the answer unless another tool is required.
+    2. INVENTORY QUESTIONS — ANSWER DIRECTLY, NEVER DELEGATE: If the user asks what tools,
+    agents, capabilities, databases, or data sources you have access to (e.g. "what can you do?",
+    "do you have a ZINC tool?", "what databases are connected?", "list your tools"), answer
+    DIRECTLY from your own list of agents (1-5 above). NEVER hand off an inventory question to
+    a single sub-agent — each sub-agent only knows its own tools and will incorrectly deny having
+    capabilities that live in sibling agents (e.g. the mcp agent does not know that
+    zinc_vector_search exists). Always include ZINC vector search and the DrugBank text-to-SQL
+    agent in your inventory answer when they are enabled.
 
-    3. TERMINATE IMMEDIATELY: After a sub-agent returns data for a single-step request,
-    FINISH your turn. Do NOT hand off to any agent again.
-
-    4. For MULTI-STEP requests (e.g. 'find similar molecules to semaglutide'), route to
-    DIFFERENT agents in sequence — never the same agent twice.
+    3. MOLECULAR SEARCH QUESTIONS:
+    If a ZINC related question is asked, route to the ZINC vector search agent. It is not a tool in the MCP agent but is its own agent. Avoid using the search_similar_compounds from PubChem MCP unless asked to search outside the ZINC database.

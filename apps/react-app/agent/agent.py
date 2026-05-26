@@ -105,6 +105,7 @@ def get_current_config() -> dict:
         "llm_endpoint": (_current_cfg or _cfg).get("llm_endpoint", ""),
         "mcp_servers": all_mcps,
         "enabled_mcps": enabled_mcps,
+        "example_questions": (_current_cfg or _cfg).get("example_questions", []) or [],
     }
 
 
@@ -167,8 +168,10 @@ def _build_agent(cfg: dict) -> StateGraph:
     from langchain.agents import create_agent
     from langchain.tools import tool
     from langgraph_supervisor import create_supervisor
+    from unitycatalog.ai.core.databricks import DatabricksFunctionClient
 
     ws_client = init_workspace_client(cfg)
+    uc_fn_client = DatabricksFunctionClient()
 
     llm = ChatDatabricks(endpoint=cfg["llm_endpoint"])
 
@@ -207,13 +210,17 @@ def _build_agent(cfg: dict) -> StateGraph:
         if retriever_config["search_type"] == "vector":
             # only needed if non-text embeddings
             @tool
-            def tool_vectorinput(bitstring: str):
+            def tool_vectorinput(smiles: str):
                 """
                 Search for similar molecules based on their ECFP4 molecular fingerprints embedding
                 vector (list of int). Required input (bitstring) is a 1024-char bitstring
                 (e.g. 1011..00) which is the concatenated string form of a list of 1024 integers.
                 """
-                query_vector = [int(c) for c in bitstring]
+                bitstring = uc_fn_client.execute_function(
+                    function_name="healthcare_lifesciences.qsar.get_embedding",
+                    parameters={"smiles": smiles}
+                )
+                query_vector = [int(c) for c in bitstring.value]
                 docs = retriever_tool._vector_store.similarity_search_by_vector(
                     query_vector, k=retriever_config["k"]
                 )

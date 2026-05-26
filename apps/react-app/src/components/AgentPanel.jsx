@@ -9,6 +9,7 @@ export default function AgentPanel({
   toolCallGroups,  // [{prompt, toolCalls: [{function_name, parameters, thinking}]}]
   genieGroups,     // [{prompt, results: [{description, query, result}]}]
   isLoading,
+  statusMessage,
   dbStatus,
   mcpStatus = {},
 }) {
@@ -136,7 +137,7 @@ export default function AgentPanel({
 
         {isLoading && (
           <div className="status-info">
-            <span className="spinner" /> Thinking...
+            <span className="spinner" /> {statusMessage || 'Thinking...'}
           </div>
         )}
       </div>

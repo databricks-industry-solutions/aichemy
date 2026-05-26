@@ -26,7 +26,8 @@ body {
 
 #root {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 /* Scrollbar Styles */
@@ -43,7 +44,7 @@ body {
 .app-container {
   display: flex;
   width: 100%;
-  min-height: 100vh;
+  height: 100vh;
 }
 
 .main-content {
@@ -52,6 +53,7 @@ body {
   padding: 24px;
   gap: 24px;
   overflow: hidden;
+  min-height: 0;
 }
 
 /* ========================================================================= */
@@ -66,8 +68,21 @@ body {
   flex-direction: column;
   border-right: 1px solid var(--border-color);
   flex-shrink: 0;
-  overflow-y: auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
 }
+
+.sidebar-section {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.sidebar-section:last-child { border-bottom: none; }
+.sidebar-section:first-of-type { padding-top: 0; }
 
 .sidebar-logo {
   display: flex;
@@ -121,7 +136,8 @@ body {
 
 /* Project list */
 .project-list {
-  max-height: 180px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -192,7 +208,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 220px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -299,7 +316,10 @@ body {
 }
 
 /* MCP server checkboxes */
-.mcp-list { display: flex; flex-direction: column; gap: 2px; padding: 0 8px; }
+.mcp-list {
+  display: flex; flex-direction: column; gap: 2px; padding: 0 8px;
+  flex: 1; min-height: 0; overflow-y: auto;
+}
 .mcp-item {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 8px; border-radius: 6px; cursor: pointer;
@@ -426,6 +446,8 @@ body {
   padding: 20px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 
 .chat-header { margin-bottom: 12px; }
@@ -439,8 +461,7 @@ body {
   background: var(--bg-color);
   border-radius: 8px;
   margin-bottom: 12px;
-  min-height: 400px;
-  max-height: 500px;
+  min-height: 0;
 }
 
 .chat-message {
@@ -534,6 +555,25 @@ body {
 .workflow-input-section {
   margin-bottom: 12px;
 }
+.workflow-prompt-preview {
+  margin-bottom: 8px; padding: 0 4px;
+  color: #2563eb; line-height: 1.5;
+}
+.workflow-prompt-preview-label {
+  font-size: 12px; font-weight: 600;
+  color: var(--text-muted); text-transform: uppercase;
+  letter-spacing: 0.04em; margin-bottom: 2px;
+}
+.workflow-prompt-preview-body {
+  font-size: 15px;
+}
+.prompt-placeholder {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+}
+.prompt-placeholder.filled {
+  font-family: inherit; font-size: 15px; font-weight: 600;
+}
 .workflow-text-input {
   flex: 1; padding: 10px 14px; border: 1px solid var(--border-color);
   border-radius: 8px; font-size: 14px; font-family: inherit; outline: none;
@@ -581,24 +621,25 @@ body {
 .chat-input-row { display: flex; gap: 8px; align-items: flex-end; padding-top: 12px; border-top: 1px solid var(--border-color); }
 .chat-input-container { display: flex; gap: 8px; flex: 1; align-items: flex-end; }
 .chat-input {
-  flex: 1; padding: 12px 18px; border: 1px solid var(--border-color);
-  border-radius: 16px; font-size: 14px; outline: none; font-family: inherit;
-  resize: none; overflow-y: auto; max-height: 200px; min-height: 44px;
+  flex: 1; padding: 10px 14px; border: 1px solid var(--border-color);
+  border-radius: 8px; font-size: 14px; outline: none; font-family: inherit;
+  resize: none; overflow-y: auto; max-height: 200px;
   line-height: 1.5;
 }
 .chat-input:focus { border-color: var(--primary-color); }
 .chat-input:disabled { background: var(--bg-color); cursor: not-allowed; }
 .send-button {
-  padding: 12px 24px; background: var(--primary-color); color: white;
-  border: none; border-radius: 24px; cursor: pointer; font-size: 14px; font-weight: 500;
+  padding: 10px 16px; background: var(--primary-color); color: white;
+  border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;
 }
 .send-button:hover:not(:disabled) { background: var(--primary-hover); }
 .send-button:disabled { background: #ccc; cursor: not-allowed; }
 .reset-button {
-  padding: 10px 16px; background: transparent; border: 1px solid var(--border-color);
-  border-radius: 20px; cursor: pointer; font-size: 14px; white-space: nowrap;
+  padding: 10px 16px; background: white; border: 1px solid var(--border-color);
+  border-radius: 8px; cursor: pointer; font-size: 14px; color: var(--text-secondary);
+  white-space: nowrap;
 }
-.reset-button:hover { background: var(--bg-color); border-color: var(--primary-color); }
+.reset-button:hover { background: var(--bg-color); border-color: var(--text-muted); }
 
 /* ========================================================================= */
 /* Agent Activity Column                                                     */
@@ -613,6 +654,8 @@ body {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
 }
 
 .agent-header-row {

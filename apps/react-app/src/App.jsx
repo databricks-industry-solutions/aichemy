@@ -18,13 +18,6 @@ import {
   deleteProject as deleteProjectAPI,
 } from './api/agentAPI'
 
-const EXAMPLE_QUESTIONS = [
-  "What diseases are associated with EGFR",
-  "List all the drugs in the GLP-1 agonists ATC class in DrugBank",
-  "Get the latest review study on the GI toxicity of danuglipron",
-  "Show me compounds similar to vemurafenib. Display their structures",
-]
-
 const TOPIC_SNIPPET_MAX = 48
 
 function formatProjectDateTime(d = new Date()) {
@@ -75,7 +68,7 @@ export default function App() {
   const [skillsEnabled, setSkillsEnabled] = useState(false)
 
   // Agent config (populated from backend on mount)
-  const [agentConfig, setAgentConfig] = useState({ mcp_servers: [], llm_endpoint: '' })
+  const [agentConfig, setAgentConfig] = useState({ mcp_servers: [], llm_endpoint: '', example_questions: [] })
   const [selectedModel, setSelectedModel] = useState('')
   const [isRebuilding, setIsRebuilding] = useState(false)
 
@@ -345,20 +338,52 @@ export default function App() {
         inputDict.skill_name = skillName
       }
 
-      // Stream text chunks into the last (assistant) message
+      // Accumulate inline tool calls for the current turn so they arrive
+      // as a single group in the AgentPanel when the stream finishes.
+      const pendingToolCalls = new Map()
+      const pendingToolResults = new Map()
+
       await askAgentStream(inputDict, {
         signal: controller.signal,
         onStatus: (msg) => {
           setStatusMessage(msg)
         },
         onText: (chunk) => {
-          setStatusMessage('')  // clear status once text starts flowing
+          setStatusMessage('')
           setMessages(prev => {
             const updated = [...prev]
             const last = updated[updated.length - 1]
             updated[updated.length - 1] = { ...last, content: last.content + chunk }
             return updated
           })
+        },
+        onToolCallStart: (data) => {
+          setStatusMessage(`Calling ${data.name}...`)
+          pendingToolCalls.set(data.call_id || data.id, {
+            function_name: data.name,
+            parameters: data.arguments ? (() => { try { return JSON.parse(data.arguments) } catch { return data.arguments } })() : {},
+          })
+        },
+        onToolCallDone: (data) => {
+          const existing = pendingToolCalls.get(data.call_id || data.id) || {}
+          let params = existing.parameters || {}
+          if (data.arguments) {
+            try { params = JSON.parse(data.arguments) } catch { params = data.arguments }
+          }
+          pendingToolCalls.set(data.call_id || data.id, {
+            function_name: data.name || existing.function_name || '',
+            parameters: params,
+          })
+        },
+        onToolCallResult: (data) => {
+          pendingToolResults.set(data.call_id, data.output)
+          const tc = pendingToolCalls.get(data.call_id)
+          if (tc) {
+            let parsed
+            try { parsed = JSON.parse(data.output) } catch { parsed = data.output }
+            tc.results = parsed
+          }
+          setStatusMessage('')
         },
         onToolCalls: (toolCalls) => {
           setToolCallGroups(prev => [...prev, { prompt, toolCalls }])
@@ -387,6 +412,10 @@ export default function App() {
           })
         },
         onDone: () => {
+          if (pendingToolCalls.size > 0) {
+            const toolCalls = Array.from(pendingToolCalls.values())
+            setToolCallGroups(prev => [...prev, { prompt, toolCalls }])
+          }
           refreshProjectList()
         },
       })
@@ -437,7 +466,7 @@ export default function App() {
         <ChatPanel
           messages={messages}
           projectName={currentProjectName}
-          exampleQuestions={EXAMPLE_QUESTIONS}
+          exampleQuestions={agentConfig.example_questions || []}
           onSendMessage={handleSendMessage}
           onReset={handleReset}
           onStop={handleStop}
@@ -452,6 +481,7 @@ export default function App() {
           toolCallGroups={toolCallGroups}
           genieGroups={genieGroups}
           isLoading={isLoading}
+          statusMessage={statusMessage}
           dbStatus={dbStatus}
           mcpStatus={mcpStatus}
         />

@@ -14,6 +14,19 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+_FAKE_ID_PREFIX = "resp_placeholder_"
+
+
+def replace_fake_id(obj, real_id: str):
+    """Replace temporary stream response IDs with the real AgentServer ID."""
+    if isinstance(obj, dict):
+        return {k: replace_fake_id(v, real_id) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [replace_fake_id(item, real_id) for item in obj]
+    if isinstance(obj, str) and obj.startswith(_FAKE_ID_PREFIX):
+        return real_id
+    return obj
+
 # Maps tool_name -> mcp_server_name (e.g. "search_pubmed" -> "pubmed").
 # Populated at agent startup so tool wrappers know which server owns each tool.
 _tool_server_map: dict[str, str] = {}
