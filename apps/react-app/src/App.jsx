@@ -18,13 +18,6 @@ import {
   deleteProject as deleteProjectAPI,
 } from './api/agentAPI'
 
-const EXAMPLE_QUESTIONS = [
-  "What diseases are associated with EGFR",
-  "List all the drugs in the GLP-1 agonists ATC class in DrugBank",
-  "Get the latest review study on the GI toxicity of danuglipron",
-  "Show me compounds similar to vemurafenib. Display their structures",
-]
-
 const TOPIC_SNIPPET_MAX = 48
 
 function formatProjectDateTime(d = new Date()) {
@@ -75,7 +68,7 @@ export default function App() {
   const [skillsEnabled, setSkillsEnabled] = useState(false)
 
   // Agent config (populated from backend on mount)
-  const [agentConfig, setAgentConfig] = useState({ mcp_servers: [], llm_endpoint: '' })
+  const [agentConfig, setAgentConfig] = useState({ mcp_servers: [], llm_endpoint: '', example_questions: [] })
   const [selectedModel, setSelectedModel] = useState('')
   const [isRebuilding, setIsRebuilding] = useState(false)
 
@@ -473,7 +466,7 @@ export default function App() {
         <ChatPanel
           messages={messages}
           projectName={currentProjectName}
-          exampleQuestions={EXAMPLE_QUESTIONS}
+          exampleQuestions={agentConfig.example_questions || []}
           onSendMessage={handleSendMessage}
           onReset={handleReset}
           onStop={handleStop}

@@ -34,6 +34,55 @@ except ImportError:
 from agent.utils_memory import get_user_id, fetch_user_memories
 from agent.utils import _FAKE_ID_PREFIX, _disabled_mcps_ctx, _tool_server_map
 
+# Config sections that define LangGraph sub-agents vs MCP data sources.
+# Used by _log_request_inventory() to label each enabled item.
+_AGENT_CFG_SECTIONS = ("uc_functions", "genie", "retriever")
+_MCP_CFG_SECTIONS = ("external_mcp", "custom_mcp", "uc_connections")
+# Always-on built-in sub-agents (not driven by config sections).
+_BUILTIN_AGENTS = ("mcp", "memory")
+
+
+def _extract_last_user_question(cc_msgs) -> str:
+    """Return the most recent user message text from a chat-completions message list."""
+    for msg in reversed(cc_msgs):
+        role = getattr(msg, "type", None)
+        if role == "human":
+            content = getattr(msg, "content", "")
+        elif isinstance(msg, dict) and msg.get("role") == "user":
+            content = msg.get("content", "")
+        else:
+            continue
+        if isinstance(content, list):
+            content = " ".join(
+                part.get("text", "") for part in content if isinstance(part, dict)
+            )
+        return str(content).strip()
+    return ""
+
+
+def _log_request_inventory(cfg: dict, cc_msgs, enabled_mcps) -> None:
+    """Print the user question and the enabled agents / MCP servers to stdout."""
+    cfg = cfg or {}
+    all_agents = list(_BUILTIN_AGENTS) + [
+        name for section in _AGENT_CFG_SECTIONS for name in cfg.get(section, {})
+    ]
+    all_mcps = [name for section in _MCP_CFG_SECTIONS for name in cfg.get(section, {})]
+
+    if enabled_mcps is None:
+        enabled_agents = all_agents
+        enabled_mcp_servers = all_mcps
+    else:
+        enabled_set = set(enabled_mcps)
+        enabled_agents = [a for a in all_agents if a in enabled_set or a in _BUILTIN_AGENTS]
+        enabled_mcp_servers = [m for m in all_mcps if m in enabled_set]
+
+    question = _extract_last_user_question(cc_msgs)
+    print("=" * 80, flush=True)
+    print(f"[request] question: {question!r}", flush=True)
+    print(f"[request] agents enabled ({len(enabled_agents)}): {enabled_agents}", flush=True)
+    print(f"[request] mcp enabled ({len(enabled_mcp_servers)}): {enabled_mcp_servers}", flush=True)
+    print("=" * 80, flush=True)
+
 logger = logging.getLogger(__name__)
 
 async def process_agent_astream_events(
@@ -193,6 +242,8 @@ async def process_agent_astream_events(
 
         elif event[0] == "updates":
             for node_data in event[1].values():
+                if not isinstance(node_data, dict):
+                    continue
                 messages = node_data.get("messages", [])
                 if not messages:
                     continue
@@ -420,6 +471,8 @@ class WrappedAgent(ResponsesAgent):
             _ctx_token = _disabled_mcps_ctx.set(disabled_mcps)
             if disabled_mcps:
                 logger.info("Disabled MCP servers for this request: %s", disabled_mcps)
+
+            _log_request_inventory(self.config, cc_msgs, enabled_mcps)
 
             inputs = {"messages": cc_msgs}
             config: dict[str, Any] = {

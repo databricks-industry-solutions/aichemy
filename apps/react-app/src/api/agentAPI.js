@@ -285,7 +285,7 @@ export async function fetchAgentConfig() {
   } catch {
     // ignore
   }
-  return { llm_endpoint: '', mcp_servers: [], enabled_mcps: [] }
+  return { llm_endpoint: '', mcp_servers: [], enabled_mcps: [], example_questions: [] }
 }
 
 /**

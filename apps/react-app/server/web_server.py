@@ -252,6 +252,7 @@ async def get_agent_config():
         "llm_endpoint": cfg.get("llm_endpoint", ""),
         "mcp_servers": all_mcps,
         "enabled_mcps": all_mcps,
+        "example_questions": cfg.get("example_questions", []) or [],
     }
 
 

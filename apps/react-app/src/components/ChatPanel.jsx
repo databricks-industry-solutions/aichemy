@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { WORKFLOWS_BY_NAME, PLACEHOLDER_LABELS } from '../workflows.js'
 
 function ElapsedTimer() {
   const [seconds, setSeconds] = useState(0)
@@ -18,6 +19,36 @@ const COMPOUND_PROPS = [
   "Bioactivity: IC50...",
   "All",
 ]
+
+function fillTemplate(template, values) {
+  return template.replace(/\$\{(\w+)\}/g, (_, key) =>
+    values[key] != null && values[key] !== '' ? values[key] : `\${${key}}`
+  )
+}
+
+function PromptPreview({ template, values }) {
+  if (!template) return null
+  const parts = template.split(/(\$\{\w+\})/g)
+  return (
+    <div className="workflow-prompt-preview">
+      <div className="workflow-prompt-preview-label">Loads prompt:</div>
+      <div className="workflow-prompt-preview-body">
+        {parts.map((part, i) => {
+          const match = part.match(/^\$\{(\w+)\}$/)
+          if (!match) return <span key={i}>{part}</span>
+          const key = match[1]
+          const v = values[key]
+          const filled = v != null && v !== ''
+          return (
+            <span key={i} className={`prompt-placeholder${filled ? ' filled' : ''}`}>
+              {filled ? v : (PLACEHOLDER_LABELS[key] || part)}
+            </span>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
 
 export default function ChatPanel({
   messages,
@@ -86,20 +117,9 @@ export default function ChatPanel({
 
   const handleWorkflowEnter = () => {
     if (!workflowInput.trim()) return
-
-    if (selectedWorkflow === 'target-identification') {
-      handleWorkflowSubmit(
-        `Use OpenTargets to find targets associated with ${workflowInput}. Show their scores if any and rank in descending order of scores.`
-      )
-    } else if (selectedWorkflow === 'hit-identification') {
-      handleWorkflowSubmit(
-        `Use OpenTargets to find drugs associated with ${workflowInput}. Show their scores if any and rank in descending order of scores.`
-      )
-    } else if (selectedWorkflow === 'safety-assessment') {
-      handleWorkflowSubmit(
-        `Use PubMed to find the safety profile of ${workflowInput}. If citing studies, please state the strength of the evidence based on the study design.`
-      )
-    }
+    const wf = WORKFLOWS_BY_NAME[selectedWorkflow]
+    if (!wf?.canned_prompt) return
+    handleWorkflowSubmit(fillTemplate(wf.canned_prompt, { workflowInput }))
   }
 
   const handleWorkflowKeyDown = (e) => {
@@ -108,11 +128,16 @@ export default function ChatPanel({
 
   const handleLeadOptSubmit = () => {
     if (!workflowInput.trim() || compoundProps.length === 0) return
-    const propsStr = compoundProps.join(', ')
+    const wf = WORKFLOWS_BY_NAME['ADME-assessment']
     handleWorkflowSubmit(
-      `Use PubChem to get ${propsStr} properties of ${workflowInput}.`
+      fillTemplate(wf.canned_prompt, {
+        workflowInput,
+        compoundProps: compoundProps.join(', '),
+      })
     )
   }
+
+  const currentWorkflow = selectedWorkflow ? WORKFLOWS_BY_NAME[selectedWorkflow] : null
 
   return (
     <section className="chat-column">
@@ -159,53 +184,30 @@ export default function ChatPanel({
             <span className="spinner" />
             <span className="status-text">{statusMessage || 'Thinking...'}</span>
             <ElapsedTimer />
-            <button className="stop-button" onClick={onStop}>Stop</button>
+            <button type="button" className="stop-button" onClick={onStop}>Stop</button>
           </div>
         )}
       </div>
 
       {/* Workflow-specific inputs */}
-      {selectedWorkflow === 'target-identification' && (
-        <div className="workflow-input-row">
-          <input
-            className="workflow-text-input"
-            placeholder="e.g., breast cancer, Alzheimer's disease"
-            value={workflowInput}
-            onChange={(e) => setWorkflowInput(e.target.value)}
-            onKeyDown={handleWorkflowKeyDown}
-            disabled={isLoading}
-          />
-          <button className="workflow-enter-btn" onClick={handleWorkflowEnter} disabled={isLoading || !workflowInput.trim()}>Enter</button>
-          <button className="clear-btn" onClick={onClearWorkflow}>Clear</button>
-        </div>
-      )}
-
-      {selectedWorkflow === 'hit-identification' && (
-        <div className="workflow-input-row">
-          <input
-            className="workflow-text-input"
-            placeholder="e.g., BRCA1, GLP-1"
-            value={workflowInput}
-            onChange={(e) => setWorkflowInput(e.target.value)}
-            onKeyDown={handleWorkflowKeyDown}
-            disabled={isLoading}
-          />
-          <button className="workflow-enter-btn" onClick={handleWorkflowEnter} disabled={isLoading || !workflowInput.trim()}>Enter</button>
-          <button className="clear-btn" onClick={onClearWorkflow}>Clear</button>
-        </div>
-      )}
-
-      {selectedWorkflow === 'ADME-assessment' && (
+      {currentWorkflow?.variant === 'adme' && (
         <div className="workflow-input-section">
+          <PromptPreview
+            template={currentWorkflow.canned_prompt}
+            values={{
+              workflowInput,
+              compoundProps: compoundProps.length > 0 ? compoundProps.join(', ') : '',
+            }}
+          />
           <div className="workflow-input-row">
             <input
               className="workflow-text-input"
-              placeholder="e.g., acetaminophen, semaglutide, CHEMBL25"
+              placeholder={currentWorkflow.input_placeholder}
               value={workflowInput}
               onChange={(e) => setWorkflowInput(e.target.value)}
               disabled={isLoading}
             />
-            <button className="clear-btn" onClick={onClearWorkflow}>Clear</button>
+            <button type="button" className="clear-btn" onClick={onClearWorkflow}>Clear</button>
           </div>
           {workflowInput.trim() && (
             <div className="compound-props">
@@ -214,6 +216,7 @@ export default function ChatPanel({
                 {COMPOUND_PROPS.map(prop => (
                   <button
                     key={prop}
+                    type="button"
                     className={`pill${compoundProps.includes(prop) ? ' selected' : ''}`}
                     onClick={() => toggleProp(prop)}
                   >
@@ -222,7 +225,7 @@ export default function ChatPanel({
                 ))}
               </div>
               {compoundProps.length > 0 && (
-                <button className="submit-workflow-btn" onClick={handleLeadOptSubmit} disabled={isLoading}>
+                <button type="button" className="submit-workflow-btn" onClick={handleLeadOptSubmit} disabled={isLoading}>
                   Search
                 </button>
               )}
@@ -231,18 +234,24 @@ export default function ChatPanel({
         </div>
       )}
 
-      {selectedWorkflow === 'safety-assessment' && (
-        <div className="workflow-input-row">
-          <input
-            className="workflow-text-input"
-            placeholder="e.g., danuglipron, semaglutide"
-            value={workflowInput}
-            onChange={(e) => setWorkflowInput(e.target.value)}
-            onKeyDown={handleWorkflowKeyDown}
-            disabled={isLoading}
+      {currentWorkflow && !currentWorkflow.variant && (
+        <div className="workflow-input-section">
+          <PromptPreview
+            template={currentWorkflow.canned_prompt}
+            values={{ workflowInput }}
           />
-          <button className="workflow-enter-btn" onClick={handleWorkflowEnter} disabled={isLoading || !workflowInput.trim()}>Enter</button>
-          <button className="clear-btn" onClick={onClearWorkflow}>Clear</button>
+          <div className="workflow-input-row">
+            <input
+              className="workflow-text-input"
+              placeholder={currentWorkflow.input_placeholder}
+              value={workflowInput}
+              onChange={(e) => setWorkflowInput(e.target.value)}
+              onKeyDown={handleWorkflowKeyDown}
+              disabled={isLoading}
+            />
+            <button type="button" className="workflow-enter-btn" onClick={handleWorkflowEnter} disabled={isLoading || !workflowInput.trim()}>Enter</button>
+            <button type="button" className="clear-btn" onClick={onClearWorkflow}>Clear</button>
+          </div>
         </div>
       )}
 
@@ -254,6 +263,7 @@ export default function ChatPanel({
             {exampleQuestions.map((question, idx) => (
               <button
                 key={idx}
+                type="button"
                 className="pill example-pill"
                 onClick={() => handleExampleClick(question)}
                 disabled={isLoading}
@@ -282,7 +292,7 @@ export default function ChatPanel({
             Send
           </button>
         </form>
-        <button className="reset-button" onClick={onReset} title="Reset chat">
+        <button type="button" className="reset-button" onClick={onReset} title="Reset chat">
           ↻ Reset
         </button>
       </div>
