@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { WORKFLOWS_BY_NAME, PLACEHOLDER_LABELS } from '../workflows'
+import { WORKFLOWS_BY_NAME, PLACEHOLDER_LABELS } from '../workflows.js'
 
 function ElapsedTimer() {
   const [seconds, setSeconds] = useState(0)

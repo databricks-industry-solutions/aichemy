@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { WORKFLOWS } from '../workflows'
+import { WORKFLOWS } from '../workflows.js'
 import modelsTxt from '/models.txt?raw'
 
 // Display names for all agent component keys returned by the backend
