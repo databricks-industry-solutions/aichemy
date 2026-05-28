@@ -252,9 +252,11 @@ def _build_agent(cfg: dict) -> StateGraph:
         logger.warning("Batch MCP loading failed for [%s] — trying servers individually…", server_names)
         mcp_tools = _load_mcp_tools_individually(servers)
     
-    # exclude get_safety_data that is overly verbose (lists full tox classification)
-    _EXCLUDED_MCP_TOOLS = {"get_safety_data"}
+    # exclude tools that are overly verbose or unimplemented
+    _EXCLUDED_MCP_TOOLS = set(cfg.get("blacklisted_tools", []))
     mcp_tools = [t for t in mcp_tools if t.name not in _EXCLUDED_MCP_TOOLS]
+    if _EXCLUDED_MCP_TOOLS:
+        logger.info("Blacklisted MCP tools (excluded): %s", _EXCLUDED_MCP_TOOLS)
     
     mcp_tools = wrap_mcp_tools_with_resilience(mcp_tools)
     mcp_agent = create_agent(
