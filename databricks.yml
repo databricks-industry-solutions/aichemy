@@ -8,11 +8,11 @@ bundle:
 variables:
   catalog:
     description: "Unity Catalog name"
-    default: "aichemy2_catalog"
+    default: "healthcare_lifesciences"
 
   schema:
     description: "Schema within the catalog"
-    default: "aichemy"
+    default: "qsar"
 
   warehouse_id:
     lookup:
@@ -20,11 +20,27 @@ variables:
 
   experiment_id:
     description: "MLflow experiment ID for tracing"
-    default: "1001868044455114"
+    default: "976725379793240"
 
   llm_endpoint:
     description: "LLM model serving endpoint"
     default: "databricks-claude-opus-4-5"
+
+  secret_scope:
+    description: "Secret scope for app SP credentials and MCP bearer tokens"
+    default: "aichemy"
+
+  lakebase_project_id:
+    description: "Lakebase Autoscaling project ID (from config.yml lakebase.project_id)"
+    default: "605906e9-742e-4c1a-aef4-11f64b8a74c2"
+
+  lakebase_branch_id:
+    description: "Lakebase branch ID (from config.yml lakebase.branch_id)"
+    default: "br-aged-scene-d1iq7b6x"
+
+  lakebase_database:
+    description: "Lakebase Postgres database name (from config.yml lakebase.database)"
+    default: "databricks_postgres"
 
 # ---------------------------------------------------------------------------
 # Targets
@@ -34,26 +50,88 @@ targets:
     default: true
     mode: development
     workspace:
-      host: https://fevm-aichemy2.cloud.databricks.com/
+      host: https://e2-demo-west.cloud.databricks.com/
 
   prod:
     mode: production
     workspace:
-      host: https://fevm-aichemy2.cloud.databricks.com/
+      host: https://e2-demo-west.cloud.databricks.com/
 
 # ---------------------------------------------------------------------------
 # Resources
 # ---------------------------------------------------------------------------
 resources:
+  secret_scopes:
+    aichemy_scope:
+      name: ${var.secret_scope}
+      permissions:
+        - user_name: ${workspace.current_user.userName}
+          level: MANAGE
+
+  postgres_projects:
+    aichemy_lakebase:
+      project_id: ${var.lakebase_project_id}
+      display_name: "AiChemy"
+      pg_version: 17
+
+  postgres_branches:
+    aichemy_branch:
+      parent: ${resources.postgres_projects.aichemy_lakebase.id}
+      branch_id: ${var.lakebase_branch_id}
+      no_expiry: true
+
+  postgres_endpoints:
+    aichemy_endpoint:
+      parent: ${resources.postgres_branches.aichemy_branch.id}
+      endpoint_id: 'primary'
+      endpoint_type: ENDPOINT_TYPE_READ_WRITE
+      autoscaling_limit_min_cu: 0.5
+      autoscaling_limit_max_cu: 4
+
   apps:
     aichemy_app:
-      name: "aichemy-app-${bundle.target}"
+      name: "aichemy-${bundle.target}"
       description: >-
         AI Chemistry assistant — chat with Drugbank (FDA-approved drugs),
         search ZINC molecular database by fingerprint similarity,
         and query PubChem / PubMed / OpenTargets via MCP.
       source_code_path: ./apps/react-app
+      resources:
+        - name: sp-client-id
+          secret:
+            scope: ${var.secret_scope}
+            key: client_id
+            permission: READ
+        - name: sp-client-secret
+          secret:
+            scope: ${var.secret_scope}
+            key: client_secret
+            permission: READ
+        - name: pubchem-api-token
+          secret:
+            scope: ${var.secret_scope}
+            key: pubchem_glama_api
+            permission: READ
+        - name: mlflow-experiment
+          experiment:
+            experiment_id: ${var.experiment_id}
+            permission: CAN_MANAGE
+        - name: lakebase-db
+          postgres:
+            branch: projects/${var.lakebase_project_id}/branches/${var.lakebase_branch_id}
+            database: projects/${var.lakebase_project_id}/branches/${var.lakebase_branch_id}/databases/${var.lakebase_database}
+            permission: CAN_CONNECT_AND_CREATE
   jobs:
+    secrets_setup:
+      name: "[${bundle.target}] AiChemy – Populate secret scope"
+      description: >-
+        One-time setup: write SP credentials and MCP bearer tokens into the
+        secret scope. Run manually after bundle deploy, or use scripts/put_secrets.sh.
+      tasks:
+        - task_key: put_secrets
+          notebook_task:
+            notebook_path: ./notebooks/0_setup_secrets.py
+
     data_setup:
       name: "[${bundle.target}] AiChemy – Load data and create vector search"
       tasks:

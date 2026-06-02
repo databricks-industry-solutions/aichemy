@@ -7,23 +7,24 @@ cd "$SCRIPT_DIR"
 usage() {
     echo "Usage: $0 [--dry] [--target dev|prod] [--sync-only]"
     echo ""
-    echo "  --dry        Preview config sync without writing"
-    echo "  --target T   Deploy to target T (default: dev)"
-    echo "  --sync-only  Only sync config.yml → databricks.yml, skip deploy"
+    echo "  --dry         Preview config sync without writing"
+    echo "  --target T    Deploy to target T (default: dev)"
+    echo "  --sync-only   Only sync config.yml → databricks.yml, skip deploy"
+    echo "                (requires AICHEMY_CLIENT_ID and AICHEMY_CLIENT_SECRET)"
     exit 1
 }
 
 DRY=""
 TARGET="dev"
-SYNC_ONLY=true
+SYNC_ONLY=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --dry)       DRY="--dry"; shift ;;
-        --target)    TARGET="$2"; shift 2 ;;
-        --sync-only) SYNC_ONLY=true; shift ;;
-        -h|--help)   usage ;;
-        *)           echo "Unknown option: $1"; usage ;;
+        --dry)         DRY="--dry"; shift ;;
+        --target)      TARGET="$2"; shift 2 ;;
+        --sync-only)   SYNC_ONLY=true; shift ;;
+        -h|--help)     usage ;;
+        *)             echo "Unknown option: $1"; usage ;;
     esac
 done
 

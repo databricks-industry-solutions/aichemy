@@ -444,6 +444,54 @@ def _strip_lc_ids(result):
     return result
 
 
+# ---------------------------------------------------------------------------
+# LLM factory — schema-safe wrapper for models that reject certain JSON schema
+# constraints (minimum, maximum, etc.) on number/string/array types.
+# ---------------------------------------------------------------------------
+
+# Models whose endpoints reject JSON schema validation constraints.
+_SCHEMA_CONSTRAINED_MODELS: frozenset[str] = frozenset({
+    "databricks-llama-4-maverick",
+    "databricks-qwen35-122b-a10b",
+    "databricks-gemini-2-5-pro",
+})
+
+# JSON schema keywords that some strict models refuse to accept.
+_UNSUPPORTED_SCHEMA_KEYWORDS: frozenset[str] = frozenset({
+    "minimum", "maximum",
+    "exclusiveMinimum", "exclusiveMaximum",
+    "minLength", "maxLength",
+    "minItems", "maxItems",
+    "multipleOf",
+})
+
+
+def _strip_schema_constraints(schema: dict) -> dict:
+    """Recursively remove validation keywords that strict LLMs reject.
+
+    Some models (Llama 4 Maverick, Qwen35, Gemini) return a 400 error when
+    tool schemas contain ``minimum``/``maximum`` and similar constraints.
+    This function deep-copies the schema with those keys removed so the tool
+    list shape is preserved but without the offending keywords.
+    """
+    if not isinstance(schema, dict):
+        return schema
+    result: dict = {}
+    for k, v in schema.items():
+        if k in _UNSUPPORTED_SCHEMA_KEYWORDS:
+            continue
+        if isinstance(v, dict):
+            result[k] = _strip_schema_constraints(v)
+        elif isinstance(v, list):
+            result[k] = [
+                _strip_schema_constraints(i) if isinstance(i, dict) else i
+                for i in v
+            ]
+        else:
+            result[k] = v
+    return result
+
+
 def wrap_mcp_tools_with_resilience(tools, max_concurrent=2, call_delay=1.0):
     """Wrap MCP tools with concurrency limiting and graceful error handling.
 

@@ -1,10 +1,10 @@
 """Smoke-test the AiChemy streaming contract.
 
 Usage:
-    STREAM_TEST_BASE_URL=http://localhost:8000 python test_streaming_contract.py
+    STREAM_TEST_BASE_URL=http://localhost:8000 python tests/test_streaming_contract.py
     STREAM_TEST_BASE_URL=https://...aws.databricksapps.com \
       STREAM_TEST_BEARER_TOKEN=$(databricks auth token ... | jq -r .access_token) \
-      python test_streaming_contract.py
+      python tests/test_streaming_contract.py
 """
 
 from __future__ import annotations

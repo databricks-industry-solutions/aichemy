@@ -6,23 +6,38 @@ Makes config.yml the single source of truth for shared parameters.
 Run before `databricks bundle deploy`.
 
 Usage:
-    python3 sync_config.py          # update databricks.yml in place
-    python3 sync_config.py --dry    # preview changes without writing
+    python3 gen_databricksyaml.py          # update databricks.yml in place
+    python3 gen_databricksyaml.py --dry    # preview changes without writing
 """
 
 from __future__ import annotations
 
 import argparse
 import re
-import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "apps" / "react-app" / "config.yml"
 BUNDLE_PATH = ROOT / "databricks.yml"
 
-# Minimal YAML value parser (handles strings, numbers, unquoted scalars)
 _SCALAR_RE = re.compile(r'^["\']?(.+?)["\']?$')
+
+# config.yml lakebase.* keys → databricks.yml variables.*
+LAKEBASE_TO_VAR = {
+    "project_id": "lakebase_project_id",
+    "branch_id": "lakebase_branch_id",
+    "endpoint_id": "lakebase_endpoint_id",
+    "database": "lakebase_database",
+}
+
+VAR_KEYS = {
+    "catalog",
+    "schema",
+    "experiment_id",
+    "llm_endpoint",
+    "secret_scope",
+    *LAKEBASE_TO_VAR.values(),
+}
 
 
 def _read_config_values(path: Path) -> dict[str, str]:
@@ -45,42 +60,86 @@ def _read_config_values(path: Path) -> dict[str, str]:
     return result
 
 
-# Maps  config.yml key  →  (regex to find the line in databricks.yml, format template)
-# The regex must have exactly one capture group around the value portion.
-FIELD_PATTERNS: dict[str, tuple[str, str]] = {
-    "catalog": (
-        r'^(\s+default:\s*")[^"]*(".*# catalog.*)$|^(\s+default:\s*")[^"]*("\s*)$',
-        None,  # handled specially below
-    ),
-    "schema": (None, None),
-    "experiment_id": (None, None),
-    "llm_endpoint": (None, None),
-    "host": (None, None),
-}
+def _read_nested_section(path: Path, section: str) -> dict[str, str]:
+    """Read one-level nested scalar key: value pairs under a top-level section."""
+    result: dict[str, str] = {}
+    in_section = False
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or ":" not in stripped:
+            continue
+        indent = len(line) - len(line.lstrip())
+        key, _, raw = stripped.partition(":")
+        key = key.strip()
+        raw = raw.strip()
+
+        if indent == 0:
+            in_section = key == section
+            continue
+
+        if not in_section or indent != 2:
+            continue
+        if not raw or raw.startswith("{") or raw.startswith("["):
+            continue
+        m = _SCALAR_RE.match(raw)
+        result[key] = m.group(1) if m else raw
+    return result
+
+
+def _read_service_principal_scope(path: Path) -> str | None:
+    """Return the secret scope name from service_principal.<scope>."""
+    in_section = False
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or ":" not in stripped:
+            continue
+        indent = len(line) - len(line.lstrip())
+        key, _, raw = stripped.partition(":")
+        key = key.strip()
+        raw = raw.strip()
+
+        if indent == 0:
+            in_section = key == "service_principal"
+            continue
+
+        if in_section and indent == 2 and not raw:
+            return key
+    return None
+
+
+def _build_config() -> dict[str, str]:
+    config = _read_config_values(CONFIG_PATH)
+    lakebase = _read_nested_section(CONFIG_PATH, "lakebase")
+    for lk, var in LAKEBASE_TO_VAR.items():
+        if lk in lakebase:
+            config[var] = lakebase[lk]
+    scope = _read_service_principal_scope(CONFIG_PATH)
+    if scope:
+        config["secret_scope"] = scope
+    return config
+
+
+def _replace_default(line: str, cfg_val: str) -> str:
+    line = re.sub(r'(default:\s*)"[^"]*"', rf'\1"{cfg_val}"', line)
+    if '"' not in line.split("default:", 1)[1]:
+        line = re.sub(r"(default:\s*)\S+", rf'\1"{cfg_val}"', line)
+    return line
 
 
 def sync(*, dry: bool = False) -> list[str]:
-    config = _read_config_values(CONFIG_PATH)
+    config = _build_config()
     lines = BUNDLE_PATH.read_text().splitlines(keepends=True)
-
     changes: list[str] = []
 
-    # We walk through databricks.yml and update `default:` values in the
-    # variables section, and `host:` values in the targets section, by
-    # tracking which variable block we're inside.
-
-    current_var: str | None = None  # which variable block we're in (catalog, schema, …)
+    current_var: str | None = None
     in_targets = False
     in_workspace = False
-
-    var_keys = {"catalog", "schema", "experiment_id", "llm_endpoint"}
 
     new_lines: list[str] = []
     for line in lines:
         stripped = line.lstrip()
         indent = len(line) - len(line.lstrip())
 
-        # Track top-level sections
         if indent == 0 and stripped.startswith("variables:"):
             current_var = None
             in_targets = False
@@ -91,12 +150,11 @@ def sync(*, dry: bool = False) -> list[str]:
             in_targets = False
             current_var = None
 
-        # Inside variables: detect sub-keys like "  catalog:"
-        if not in_targets and indent == 2 and stripped.rstrip().rstrip(":") in var_keys:
-            current_var = stripped.rstrip().rstrip(":")
+        if not in_targets and indent == 2 and stripped.endswith(":"):
+            key = stripped.rstrip().rstrip(":")
+            current_var = key if key in VAR_KEYS else None
 
-        # Replace `default:` value for a known variable
-        if current_var and current_var in var_keys and stripped.startswith("default:"):
+        if current_var and current_var in VAR_KEYS and stripped.startswith("default:"):
             cfg_val = config.get(current_var)
             if cfg_val is not None:
                 old_val_match = re.search(r'default:\s*"([^"]*)"', line) or re.search(
@@ -107,26 +165,20 @@ def sync(*, dry: bool = False) -> list[str]:
                     changes.append(
                         f"  variables.{current_var}.default: {old_val!r} → {cfg_val!r}"
                     )
-                    line = re.sub(
-                        r'(default:\s*)"[^"]*"',
-                        rf'\1"{cfg_val}"',
-                        line,
-                    )
-                    if '"' not in line.split("default:")[1]:
-                        line = re.sub(
-                            r"(default:\s*)\S+",
-                            rf'\1"{cfg_val}"',
-                            line,
-                        )
+                    line = _replace_default(line, cfg_val)
 
-        # Track workspace blocks inside targets
         if in_targets and stripped.startswith("workspace:"):
             in_workspace = True
-        elif in_targets and indent <= 4 and not stripped.startswith("workspace:") and ":" in stripped and indent > 0:
+        elif (
+            in_targets
+            and indent <= 4
+            and not stripped.startswith("workspace:")
+            and ":" in stripped
+            and indent > 0
+        ):
             if indent <= 4 and not stripped.startswith("host:"):
                 in_workspace = stripped.startswith("workspace:")
 
-        # Replace host: in targets.*.workspace
         if in_targets and in_workspace and stripped.startswith("host:"):
             cfg_host = config.get("host")
             if cfg_host:

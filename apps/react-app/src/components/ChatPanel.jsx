@@ -67,6 +67,7 @@ export default function ChatPanel({
   const [inputValue, setInputValue] = useState('')
   const [workflowInput, setWorkflowInput] = useState('')
   const [compoundProps, setCompoundProps] = useState([])
+  const [helpOpen, setHelpOpen] = useState(false)
   const textareaRef = useRef(null)
 
   // Auto-grow the textarea as content expands
@@ -144,7 +145,95 @@ export default function ChatPanel({
       {/* Header */}
       <div className="chat-header">
         <h2>{projectName || 'Chat'}</h2>
+        <div className="header-buttons">
+          <a
+            className="header-btn"
+            href="https://www.databricks.com/blog/aichemy-next-generation-agent-mcp-skills-and-custom-data-drug-discovery"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Read the blog post"
+          >
+            📖 Blog
+          </a>
+          <a
+            className="header-btn"
+            href="https://db-dais-2026.cloud.databricks.com/apps-v2/app/aichemy/overview?o=7474650217702955"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="View code"
+          >
+            Code
+          </a>
+          <button className="header-btn" onClick={() => setHelpOpen(true)} title="Open help">
+            ? Help
+          </button>
+        </div>
       </div>
+
+      {/* Help Dialog */}
+      {helpOpen && (
+        <div className="help-overlay" onClick={() => setHelpOpen(false)}>
+          <div className="help-dialog" onClick={e => e.stopPropagation()}>
+            <div className="help-dialog-header">
+              <h3>Help</h3>
+              <button className="help-close-btn" onClick={() => setHelpOpen(false)} aria-label="Close">✕</button>
+            </div>
+            <div className="help-dialog-body">
+              <h4>Recommended demo setup</h4>
+              <ol>
+                <li>Select Claude Sonnet 4.5, PubChem, ZINC and Chem Utils.</li>
+                <li>Hit <strong>Refresh</strong>.</li>
+                <li>Click on the <strong>+ New Project</strong> button to start a new conversation.</li>
+              </ol>
+
+
+              <h4>Suggested prompts</h4>
+                <h5>Persona: Researcher</h5>
+                <ol>
+                  <li>(First example on New Project page) Show me the molecule image of orforglipron.</li>
+                  <li>Find in the ZINC vector search 3 molecules most similar to it</li>
+                  <li>Predict the ADMET properties of the molecule</li>
+                </ol>
+                <br />
+                <h5>Persona: Commercial Analyst</h5>
+                <ol>
+                  <li>Select PubMed, OpenTargets, Clinical Trials, CMS MCP servers and hit <strong>Refresh</strong>.</li>
+                  <li>Choose the <strong>Market Sizing</strong> workflow and input the drug <strong>orforglipron</strong></li>
+                </ol>
+
+              <h4>Settings</h4>
+              <p>Select a model (Claude Sonnet 4.5 recommended) and MCP servers and hit <strong>Refresh</strong>.<br />
+              Avoid selecting too many MCP servers at once.</p>
+                
+              <h4>Workflows</h4> 
+              <p>Select a workflow to activate a guided, structured prompt. Fill in the workflow inputs and click <strong>Enter</strong> to start the workflow.</p>
+ 
+              <h4>Cancel a query</h4>
+              <p>Hit <strong>Stop</strong> to cancel the current request.</p>
+
+              <h4>Reset the current thread/project</h4>
+              <p>Hit <strong>↻ Reset</strong> to clear the <i>current</i> conversation.</p>
+
+              <h4>Start a new thread/project</h4>
+              <p>Hit <strong>+ New Project</strong> to start a <i>new</i> conversation.</p>
+
+              <h4>Troubleshooting</h4>
+              <p>
+                <ul>
+                  <li>Avoid changing projects while waiting for a response. The response may sometimes show up in the wrong project.</li>
+                  <li>MCP status in orange or red means that the MCP server may be down. </li>
+                </ul>
+                <ol>        
+                  Two options:
+                  <li>Hit <strong>Reboot</strong> to reconnect all MCP servers, or</li>
+                  <li>Unselect the MCP server in Settings and hit <strong>Refresh</strong>.</li>
+                </ol>
+              </p>
+              <p>Check <a href={`${window.location.origin}/api/health`} target="_blank" rel="noopener noreferrer">{window.location.origin}/api/health</a> for more error details.</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Chat History */}
       <div className="chat-history" ref={chatHistoryRef}>

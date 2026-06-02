@@ -18,6 +18,7 @@ uc_functions:
     - healthcare_lifesciences.qsar.molecule_png_url
     - healthcare_lifesciences.qsar.predict_admet
 uc_connections:
+  web: conn_you_web
   pubmed: climb_hls_pubmed
   bio/medrxiv: climb_hls_biorxiv
   clinical_trials: conn_clinicaltrials
@@ -68,10 +69,10 @@ lakebase:
   embedding: databricks-gte-large-en
   embedding_dim: 1024
 example_questions:
+  - Show me the molecule image of orforglipron.
   - What diseases are associated with EGFR?
   - List all the drugs in the GLP-1 agonists ATC class in DrugBank.
   - Get the latest review study on the GI toxicity of danuglipron.
-  - Show me compounds similar to vemurafenib. Display their structures.
 prompts:
   chem_utils: >-
     You are a python function that can generate 1024-bit ECFP molecular fingerprint embeddings
@@ -98,9 +99,9 @@ prompts:
     2. ZINC vector search agent for similarity search by SMILES (1024-bit ECFP computed internally from SMILES input)
     3. text-to-sql agent querying DrugBank for FDA-approved drugs and their properties
     4. memory agent that saves and deletes long-term user memories
-    5. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, depending on whether they are enabled in the UI
+    5. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, You.com web search,depending on whether they are enabled in the UI
     Some of these agents or MCP servers may be disabled in the UI so when listing abilities, do check if the agent or MCP server is disabled before listing.
-
+    
     Avoid relying on your trained knowledge. Always use the tools available to you. For example, look up the CID and SMILES from the PubChem MCP server.
 
     Because you are an autonomous multi-agent system, do not ask for more follow up information.
@@ -128,4 +129,3 @@ prompts:
 
     4. ADMET PREDICTION QUESTIONS:
     If a question is asked about predicting ADMET properties, route to the chem utils agent with the predict_admet tool. Do not use the predict_admet_properties tool from the PubChem MCP server.
-    

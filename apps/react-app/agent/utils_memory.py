@@ -14,6 +14,7 @@ import os
 from typing import Optional
 
 from databricks.sdk import WorkspaceClient
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import tool
 from langgraph.store.base import BaseStore
@@ -107,6 +108,47 @@ async def fetch_user_memories(
         "## User memories (retrieved automatically)\n"
         + "\n".join(items)
     )
+
+
+def inject_memory_into_messages(messages: list, memory_ctx: str) -> list:
+    """Fold retrieved memory into the latest user message.
+
+    Some models (e.g. Qwen) reject system messages anywhere except index 0.
+    On follow-up turns, prepending a SystemMessage to the new input lands it in
+    the middle of the checkpointed history (after add_messages merges it), which
+    triggers a 400 'System message must be at the beginning'. Merging memory into
+    the user turn keeps the same context without an out-of-place system message.
+    """
+    if not memory_ctx or not messages:
+        return messages
+
+    msgs = list(messages)
+    for i in range(len(msgs) - 1, -1, -1):
+        msg = msgs[i]
+        is_user = (
+            getattr(msg, "type", None) == "human"
+            or (isinstance(msg, dict) and msg.get("role") == "user")
+        )
+        if not is_user:
+            continue
+
+        if isinstance(msg, dict):
+            content = msg.get("content", "")
+        else:
+            content = getattr(msg, "content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    part.get("text", "") for part in content if isinstance(part, dict)
+                )
+
+        merged = f"{memory_ctx}\n\n{content}"
+        if isinstance(msg, dict):
+            msgs[i] = {**msg, "content": merged}
+        else:
+            msgs[i] = HumanMessage(content=merged)
+        return msgs
+
+    return msgs
 
 
 def memory_write_tools():
