@@ -157,12 +157,12 @@ export default function ChatPanel({
           </a>
           <a
             className="header-btn"
-            href="https://github.com/databricks-industry-solutions/aichemy"
+            href="https://db-dais-2026.cloud.databricks.com/apps-v2/app/aichemy/overview?o=7474650217702955"
             target="_blank"
             rel="noopener noreferrer"
-            title="View on GitHub"
+            title="View code"
           >
-            GitHub
+            Code
           </a>
           <button className="header-btn" onClick={() => setHelpOpen(true)} title="Open help">
             ? Help
@@ -179,6 +179,13 @@ export default function ChatPanel({
               <button className="help-close-btn" onClick={() => setHelpOpen(false)} aria-label="Close">✕</button>
             </div>
             <div className="help-dialog-body">
+            <h4>Recommended demo setup</h4>
+            <ol>
+              <li>Select Claude Sonnet 4.5, PubChem, ZINC and Chem Utils.</li>
+              <li>Hit <strong>Refresh</strong>.</li>
+              <li>Click on the <strong>+ New Project</strong> button to start a new conversation.</li>
+            </ol>
+
               <h4>Settings</h4>
               <p>Select a model (Claude Sonnet 4.5 recommended) and MCP servers and hit <strong>Refresh</strong>.<br />
               Avoid selecting too many MCP servers at once.</p>
@@ -198,14 +205,14 @@ export default function ChatPanel({
               <h4>Troubleshooting</h4>
               <ul>
                 <li>Avoid changing projects while waiting for a response. The response may sometimes show up in the wrong project.</li>
-                <li>MCP status in orange or red means that the MCP server may be down. Two options:
-                  <ol>
-                    <li>Hit <strong>Reboot</strong> to reconnect all MCP servers, or</li>
-                    <li>Unselect the MCP server in Settings and hit <strong>Refresh</strong>.</li>
-                  </ol>
-                  Check <a href={`${window.location.origin}/api/health`} target="_blank" rel="noopener noreferrer">{window.location.origin}/api/health</a> for more error details.
-                </li>
+                <li>MCP status in orange or red means that the MCP server may be down. </li>
               </ul>
+              <ol>        
+                Two options:
+                <li>Hit <strong>Reboot</strong> to reconnect all MCP servers, or</li>
+                <li>Unselect the MCP server in Settings and hit <strong>Refresh</strong>.</li>
+              </ol>
+              <p>Check <a href={`${window.location.origin}/api/health`} target="_blank" rel="noopener noreferrer">{window.location.origin}/api/health</a> for more error details.</p>
             </div>
           </div>
         </div>
