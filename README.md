@@ -205,15 +205,36 @@ databricks apps deploy my-app-name \
 
 Remember to grant the app SP the appropriate permissions to your underlying assets (Experiment and secret scope)
 
-### 4. Databricks Assets Bundle (TBD)
+### 4. Databricks Assets Bundle
 
-The project uses Databricks Asset Bundles. [`databricks.yml`](databricks.yml) is generated from [`config.yml`](apps/react-app/config.yml) by [`gen_databricksyaml.py`](gen_databricksyaml.py). Deploy with:
+The project uses Databricks Asset Bundles. [`databricks.yml`](databricks.yml) is generated from [`config.yml`](apps/react-app/config.yml) by [`gen_databricksyaml.py`](gen_databricksyaml.py). The generator syncs workspace host, catalog/schema, experiment, LLM endpoint, and the `lakebase` block (`project_id`, `branch_id`, `endpoint_id`, `database`). Deploy with:
 
 ```bash
 ./deploy.sh
 ```
 
 Or use the Asset Bundle Editor in the Databricks UI — clone the repo as a Git Folder, open the bundle editor, and click **Deploy**.
+
+#### Secret scope
+
+The bundle creates the `aichemy` secret scope and grants the app read access to these keys:
+
+| Secret key | Purpose |
+|---|---|
+| `client_id` | App service principal client ID (Lakebase, M2M auth) |
+| `client_secret` | App service principal client secret |
+| `pubchem_glama_api` | Bearer token for PubChem MCP (Glama) |
+
+Secret **values** are not stored in the bundle. Populate them after the first deploy using the [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/reference/secrets-commands#databricks-secrets-put-secret).
+```
+databricks secrets put-secret SCOPE KEY [flags]
+```
+
+#### Lakebase project
+
+The bundle creates a Lakebase Autoscaling project (plus branch and endpoint) from the `lakebase` section in [`config.yml`](apps/react-app/config.yml). After editing those values, run `./deploy.sh --sync-only` (or `python3 gen_databricksyaml.py`) before deploy. The app is granted `CAN_CONNECT_AND_CREATE` on the configured database.
+
+> **Note:** `lakebase.project_id` must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens (RFC 1123). If you already created a project manually, set the IDs in `config.yml` to match before syncing.
 
 
 ## Supported Subagent Types

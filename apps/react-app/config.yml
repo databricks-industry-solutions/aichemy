@@ -68,10 +68,10 @@ lakebase:
   embedding: databricks-gte-large-en
   embedding_dim: 1024
 example_questions:
+  - Show me the molecule image of orforglipron.
   - What diseases are associated with EGFR?
   - List all the drugs in the GLP-1 agonists ATC class in DrugBank.
   - Get the latest review study on the GI toxicity of danuglipron.
-  - Show me compounds similar to vemurafenib. Display their structures.
 prompts:
   chem_utils: >-
     You are a python function that can generate 1024-bit ECFP molecular fingerprint embeddings
@@ -128,4 +128,3 @@ prompts:
 
     4. ADMET PREDICTION QUESTIONS:
     If a question is asked about predicting ADMET properties, route to the chem utils agent with the predict_admet tool. Do not use the predict_admet_properties tool from the PubChem MCP server.
-    

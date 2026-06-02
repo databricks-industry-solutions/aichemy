@@ -31,7 +31,7 @@ except ImportError:
     def _new_id() -> str:
         return str(uuid4())
 
-from agent.utils_memory import get_user_id, fetch_user_memories
+from agent.utils_memory import get_user_id, fetch_user_memories, inject_memory_into_messages
 from agent.utils import _FAKE_ID_PREFIX, _disabled_mcps_ctx, _tool_server_map
 
 # Config sections that define LangGraph sub-agents vs MCP data sources.
@@ -459,8 +459,7 @@ class WrappedAgent(ResponsesAgent):
                         break
                 memory_ctx = await fetch_user_memories(store, user_id, query=last_user_msg)
                 if memory_ctx:
-                    from langchain_core.messages import SystemMessage
-                    cc_msgs = [SystemMessage(content=memory_ctx)] + list(cc_msgs)
+                    cc_msgs = inject_memory_into_messages(cc_msgs, memory_ctx)
 
             enabled_mcps = ci.get("enabled_mcps")
             if enabled_mcps is not None:

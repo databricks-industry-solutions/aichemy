@@ -67,6 +67,7 @@ export default function ChatPanel({
   const [inputValue, setInputValue] = useState('')
   const [workflowInput, setWorkflowInput] = useState('')
   const [compoundProps, setCompoundProps] = useState([])
+  const [helpOpen, setHelpOpen] = useState(false)
   const textareaRef = useRef(null)
 
   // Auto-grow the textarea as content expands
@@ -144,7 +145,71 @@ export default function ChatPanel({
       {/* Header */}
       <div className="chat-header">
         <h2>{projectName || 'Chat'}</h2>
+        <div className="header-buttons">
+          <a
+            className="header-btn"
+            href="https://www.databricks.com/blog/aichemy-next-generation-agent-mcp-skills-and-custom-data-drug-discovery"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Read the blog post"
+          >
+            📖 Blog
+          </a>
+          <a
+            className="header-btn"
+            href="https://github.com/databricks-industry-solutions/aichemy"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="View on GitHub"
+          >
+            GitHub
+          </a>
+          <button className="header-btn" onClick={() => setHelpOpen(true)} title="Open help">
+            ? Help
+          </button>
+        </div>
       </div>
+
+      {/* Help Dialog */}
+      {helpOpen && (
+        <div className="help-overlay" onClick={() => setHelpOpen(false)}>
+          <div className="help-dialog" onClick={e => e.stopPropagation()}>
+            <div className="help-dialog-header">
+              <h3>Help</h3>
+              <button className="help-close-btn" onClick={() => setHelpOpen(false)} aria-label="Close">✕</button>
+            </div>
+            <div className="help-dialog-body">
+              <h4>Settings</h4>
+              <p>Select a model (Claude Sonnet 4.5 recommended) and MCP servers and hit <strong>Refresh</strong>.<br />
+              Avoid selecting too many MCP servers at once.</p>
+                
+              <h4>Workflows</h4> 
+              <p>Select a workflow to activate a guided, structured prompt. Fill in the workflow inputs and click <strong>Enter</strong> to start the workflow.</p>
+ 
+              <h4>Cancel a query</h4>
+              <p>Hit <strong>Stop</strong> to cancel the current request.</p>
+
+              <h4>Reset the current thread/project</h4>
+              <p>Hit <strong>↻ Reset</strong> to clear the <i>current</i> conversation.</p>
+
+              <h4>Start a new thread/project</h4>
+              <p>Hit <strong>+ New Project</strong> to start a <i>new</i> conversation.</p>
+
+              <h4>Troubleshooting</h4>
+              <ul>
+                <li>Avoid changing projects while waiting for a response. The response may sometimes show up in the wrong project.</li>
+                <li>MCP status in orange or red means that the MCP server may be down. Two options:
+                  <ol>
+                    <li>Hit <strong>Reboot</strong> to reconnect all MCP servers, or</li>
+                    <li>Unselect the MCP server in Settings and hit <strong>Refresh</strong>.</li>
+                  </ol>
+                  Check <a href={`${window.location.origin}/api/health`} target="_blank" rel="noopener noreferrer">{window.location.origin}/api/health</a> for more error details.
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Chat History */}
       <div className="chat-history" ref={chatHistoryRef}>
