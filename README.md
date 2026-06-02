@@ -57,8 +57,7 @@ genie:
 # --- UC function subagents ---
 uc_functions:
   analytics: # name your functions agent here
-    - my_catalog.my_schema.get_ecfp_embedding
-    - my_catalog.my_schema.get_img_url
+    - my_catalog.my_schema.get_embedding
 
 # --- UC connections (wraps around external URL) ---
 uc_connections:
@@ -97,25 +96,24 @@ lakebase:
   embedding_dim: 1024
 
 example_questions:
+  - Show me the molecule image of orforglipron.
   - What diseases are associated with EGFR?
-  - List all the drugs in the GLP-1 agonists ATC class in DrugBank.
-  - Get the latest review study on the GI toxicity of danuglipron.
-  - Show me compounds similar to vemurafenib. Display their structures.
 
 # --- Prompts for each subagent and the supervisor ---
 prompts:
   chem_utils: >-
-    You are a python function that can generate ECFP molecular fingerprint embeddings
-    from SMILES and display molecule PNG images from the PubChem website by CID in markdown.
-  zinc_molecular_search: >-
-    Search for drug-like chemicals in the ZINC database based on ECFP molecular
-    fingerprint embeddings
+    You are a python function that can generate 1024-bit ECFP molecular fingerprint embeddings
+    from SMILES. Get the SMILES from the PubChem MCP server. Do not fabricate SMILES.
+    You also have the ability to display molecule image PNG files from PubChem website by CID in markdown.
+    You also have the ability to predict ADMET properties calling an external ChemProp MPNN model. This would require you first look up SMILES as input to the ADMET prediction tool.
+  zinc_vector_search: >-
+    You search the ZINC database of 250,000 drug-like chemicals for structural similarity.
+    Pass a SMILES string directly to your search tool, not the 1024-bit ECFP bitstring.
   mcp: >-
-    You are a multi-MCP server agent connected to:
-    1. PubChem MCP server that provides everything about chemical compounds
-    2. PubMed MCP server that searches biomedical literature and retrieves free full text if any.
-    3. OpenTargets MCP server that provides everything about drug targets and their associations with diseases and drugs.
-    Most PubChem tools (e.g. get_compound_info) except for search_compounds expect a CID.
+    You are a multi-MCP server agent connected to several knowledge bases via MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, etc.
+    Some of these MCP servers may be disabled in the UI so when listing tools, do check if the tool is disabled before listing it.
+    If a tool call returns a response containing "not yet implemented", "not implemented", or "coming soon", treat that tool as unavailable for this request.
+    Do not retry it. Instead, skip that step, note it as unavailable, and continue with the remaining steps using other available tools.
   memory: >-
     You save and delete long-term user memories. Save when the user explicitly
     asks to remember something. Proactively save durable preferences, roles,
@@ -123,27 +121,7 @@ prompts:
     short-lived facts. You do NOT need to retrieve memories — that happens
     automatically before the conversation starts.
   supervisor: >-
-    You are a supervisor managing 5 agents. Route to the agent required to fulfill the request.
-
-    1. Drugbank agent: generates text-to-SQL queries to Drugbank of FDA-approved drugs and their properties
-
-    2. ZINC agent: searches for drug-like molecules and their properties from the ZINC database
-    based on ECFP4 molecular fingerprint embeddings represented as a 1024-char bitstring.
-
-    3. Chem utilities agent: display molecule image PNG files from PubChem website by CID in
-    markdown or compute ECFP4 molecular fingerprint embeddings in a 1024-char bitstring for a
-    given SMILES structure. If missing SMILES input, query it from a chemical name using the
-    PubChem MCP agent's search_compound tool.
-
-    4. MCP agent: connects to the PubChem, PubMed and OpenTargets MCP servers
-
-    5. Memory agent: saves or deletes long-term user memories. ONLY route here when the user
-    explicitly asks to "remember", "store", "note that", "from now on", "forget", or "delete memory".
-    User memories are already loaded automatically — do NOT route here to retrieve them.
-
-    Because you are an autonomous multi-agent system, do not ask for more follow up information.
-    Instead, use chain-of-thought to reason and break down the request into achievable steps
-    based on the agentic tools that you have access to.
+    You are a supervisor agent that handles the routing to the following agents depending on the request: 
 ```
 
 ### 3. Run locally
@@ -251,6 +229,7 @@ The bundle creates a Lakebase Autoscaling project (plus branch and endpoint) fro
 Add custom skills into the [`skills`](apps/react-app/skills) folder. Each skill name will be inferred from the frontmatter in `SKILL.md`.
 
 ## Architecture
+<img width="1279" height="719" alt="architecture" src="https://github.com/user-attachments/assets/f6196a8a-e765-4d40-8cd6-b1d30877fc87" />
 
 ```
 ┌─────────────────────────────────────────────────────────┐
