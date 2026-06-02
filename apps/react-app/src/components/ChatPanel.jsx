@@ -190,10 +190,11 @@ export default function ChatPanel({
               <h4>Suggested prompts</h4>
                 <h5>Persona: Researcher</h5>
                 <ol>
-                  <li>(First example button) Show me the molecule image of orforglipron.</li>
+                  <li>(First example on New Project page) Show me the molecule image of orforglipron.</li>
                   <li>Find in the ZINC vector search 3 molecules most similar to it</li>
                   <li>Predict the ADMET properties of the molecule</li>
                 </ol>
+                <br />
                 <h5>Persona: Commercial Analyst</h5>
                 <ol>
                   <li>Select PubMed, OpenTargets, Clinical Trials, CMS MCP servers and hit <strong>Refresh</strong>.</li>
