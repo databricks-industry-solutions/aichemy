@@ -247,7 +247,11 @@ async def get_agent_config():
         pass
     # Fallback: derive from config.yml directly
     cfg = load_config() or {}
-    all_mcps = list(cfg.get("external_mcp", {}).keys()) + list(cfg.get("custom_mcp", {}).keys())
+    all_mcps = (
+        list(cfg.get("external_mcp", {}).keys())
+        + list(cfg.get("custom_mcp", {}).keys())
+        + list(cfg.get("uc_connections", {}).keys())
+    )
     return {
         "llm_endpoint": cfg.get("llm_endpoint", ""),
         "mcp_servers": all_mcps,

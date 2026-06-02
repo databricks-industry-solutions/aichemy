@@ -18,6 +18,7 @@ uc_functions:
     - healthcare_lifesciences.qsar.molecule_png_url
     - healthcare_lifesciences.qsar.predict_admet
 uc_connections:
+  web: conn_you_web
   pubmed: climb_hls_pubmed
   bio/medrxiv: climb_hls_biorxiv
   clinical_trials: conn_clinicaltrials

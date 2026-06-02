@@ -23,6 +23,7 @@ const MCP_DISPLAY = {
   drugbank:              '💊 DrugBank',
   // uc_functions
   chem_utils:            '🛠️ Chem Utils',
+  web:                   '🌐 Web Search'
 }
 
 // Load model list from public/models.txt

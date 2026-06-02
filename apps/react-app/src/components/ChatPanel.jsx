@@ -179,14 +179,26 @@ export default function ChatPanel({
               <button className="help-close-btn" onClick={() => setHelpOpen(false)} aria-label="Close">✕</button>
             </div>
             <div className="help-dialog-body">
-            <h4>Recommended demo setup</h4>
-            <p>
+              <h4>Recommended demo setup</h4>
               <ol>
                 <li>Select Claude Sonnet 4.5, PubChem, ZINC and Chem Utils.</li>
                 <li>Hit <strong>Refresh</strong>.</li>
                 <li>Click on the <strong>+ New Project</strong> button to start a new conversation.</li>
-            </ol>
-            </p>
+              </ol>
+
+
+              <h4>Suggested prompts</h4>
+                <h5>Persona: Researcher</h5>
+                <ol>
+                  <li>(First example button) Show me the molecule image of orforglipron.</li>
+                  <li>Find in the ZINC vector search 3 molecules most similar to it</li>
+                  <li>Predict the ADMET properties of the molecule</li>
+                </ol>
+                <h5>Persona: Commercial Analyst</h5>
+                <ol>
+                  <li>Select PubMed, OpenTargets, Clinical Trials, CMS MCP servers and hit <strong>Refresh</strong>.</li>
+                  <li>Choose the <strong>Market Sizing</strong> workflow and input the drug <strong>orforglipron</strong></li>
+                </ol>
 
               <h4>Settings</h4>
               <p>Select a model (Claude Sonnet 4.5 recommended) and MCP servers and hit <strong>Refresh</strong>.<br />

@@ -38,10 +38,6 @@ variables:
     description: "Lakebase branch ID (from config.yml lakebase.branch_id)"
     default: "br-aged-scene-d1iq7b6x"
 
-  lakebase_endpoint_id:
-    description: "Lakebase endpoint ID (from config.yml lakebase.endpoint_id)"
-    default: "ep-twilight-union-d1f3jv1k"
-
   lakebase_database:
     description: "Lakebase Postgres database name (from config.yml lakebase.database)"
     default: "databricks_postgres"
@@ -87,7 +83,7 @@ resources:
   postgres_endpoints:
     aichemy_endpoint:
       parent: ${resources.postgres_branches.aichemy_branch.id}
-      endpoint_id: ${var.lakebase_endpoint_id}
+      endpoint_id: 'primary'
       endpoint_type: ENDPOINT_TYPE_READ_WRITE
       autoscaling_limit_min_cu: 0.5
       autoscaling_limit_max_cu: 4
@@ -115,11 +111,6 @@ resources:
           secret:
             scope: ${var.secret_scope}
             key: pubchem_glama_api
-            permission: READ
-        - name: pubmed-api-token
-          secret:
-            scope: ${var.secret_scope}
-            key: pubmed_glama_api
             permission: READ
         - name: mlflow-experiment
           experiment:
