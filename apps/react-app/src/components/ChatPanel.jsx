@@ -180,11 +180,13 @@ export default function ChatPanel({
             </div>
             <div className="help-dialog-body">
             <h4>Recommended demo setup</h4>
-            <ol>
-              <li>Select Claude Sonnet 4.5, PubChem, ZINC and Chem Utils.</li>
-              <li>Hit <strong>Refresh</strong>.</li>
-              <li>Click on the <strong>+ New Project</strong> button to start a new conversation.</li>
+            <p>
+              <ol>
+                <li>Select Claude Sonnet 4.5, PubChem, ZINC and Chem Utils.</li>
+                <li>Hit <strong>Refresh</strong>.</li>
+                <li>Click on the <strong>+ New Project</strong> button to start a new conversation.</li>
             </ol>
+            </p>
 
               <h4>Settings</h4>
               <p>Select a model (Claude Sonnet 4.5 recommended) and MCP servers and hit <strong>Refresh</strong>.<br />
@@ -203,15 +205,17 @@ export default function ChatPanel({
               <p>Hit <strong>+ New Project</strong> to start a <i>new</i> conversation.</p>
 
               <h4>Troubleshooting</h4>
-              <ul>
-                <li>Avoid changing projects while waiting for a response. The response may sometimes show up in the wrong project.</li>
-                <li>MCP status in orange or red means that the MCP server may be down. </li>
-              </ul>
-              <ol>        
-                Two options:
-                <li>Hit <strong>Reboot</strong> to reconnect all MCP servers, or</li>
-                <li>Unselect the MCP server in Settings and hit <strong>Refresh</strong>.</li>
-              </ol>
+              <p>
+                <ul>
+                  <li>Avoid changing projects while waiting for a response. The response may sometimes show up in the wrong project.</li>
+                  <li>MCP status in orange or red means that the MCP server may be down. </li>
+                </ul>
+                <ol>        
+                  Two options:
+                  <li>Hit <strong>Reboot</strong> to reconnect all MCP servers, or</li>
+                  <li>Unselect the MCP server in Settings and hit <strong>Refresh</strong>.</li>
+                </ol>
+              </p>
               <p>Check <a href={`${window.location.origin}/api/health`} target="_blank" rel="noopener noreferrer">{window.location.origin}/api/health</a> for more error details.</p>
             </div>
           </div>
