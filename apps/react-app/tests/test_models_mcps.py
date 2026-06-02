@@ -1,6 +1,6 @@
 """
 Agentic test: iterate over models and MCP combos, send a simple query, report results.
-Usage: uv run python test_models_mcps.py
+Usage: uv run python tests/test_models_mcps.py
 """
 
 import json
@@ -14,7 +14,7 @@ BASE = "http://localhost:8010"
 TEST_QUERY = "What is the molecular weight of aspirin? Answer in one sentence."
 TEST_THREAD = str(uuid.uuid4())
 
-_models_txt = Path(__file__).parent / "public" / "models.txt"
+_models_txt = Path(__file__).parent.parent / "public" / "models.txt"
 MODELS = [m.strip() for m in _models_txt.read_text().splitlines() if m.strip()]
 
 ALL_MCPS = [
