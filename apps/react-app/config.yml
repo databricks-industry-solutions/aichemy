@@ -99,9 +99,8 @@ prompts:
     2. ZINC vector search agent for similarity search by SMILES (1024-bit ECFP computed internally from SMILES input)
     3. text-to-sql agent querying DrugBank for FDA-approved drugs and their properties
     4. memory agent that saves and deletes long-term user memories
-    5. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, depending on whether they are enabled in the UI
+    5. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, You.com web search,depending on whether they are enabled in the UI
     Some of these agents or MCP servers may be disabled in the UI so when listing abilities, do check if the agent or MCP server is disabled before listing.
-    6. web search agent for searching the latest information from the web.
     
     Avoid relying on your trained knowledge. Always use the tools available to you. For example, look up the CID and SMILES from the PubChem MCP server.
 
