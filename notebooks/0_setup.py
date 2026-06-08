@@ -79,7 +79,7 @@ dbClient.test_query()
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC CREATE OR REPLACE FUNCTION healthcare_lifesciences.qsar.molecule_png_url(cid INTEGER)
+# MAGIC CREATE OR REPLACE FUNCTION healthcare_life_sciences.qsar.molecule_png_url(cid INTEGER)
 # MAGIC RETURNS STRING
 # MAGIC COMMENT 'Returns the molecule image url of a CID from PubChem'
 # MAGIC LANGUAGE PYTHON
@@ -91,7 +91,7 @@ dbClient.test_query()
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC CREATE OR REPLACE FUNCTION healthcare_lifesciences.qsar.get_embedding(smiles STRING COMMENT 'A valid SMILES molecular structure string, e.g. CCO for ethanol or c1ccccc1 for benzene. Must be a syntactically valid SMILES that RDKit can parse.')
+# MAGIC CREATE OR REPLACE FUNCTION healthcare_life_sciences.qsar.get_embedding(smiles STRING COMMENT 'A valid SMILES molecular structure string, e.g. CCO for ethanol or c1ccccc1 for benzene. Must be a syntactically valid SMILES that RDKit can parse.')
 # MAGIC RETURNS STRING
 # MAGIC COMMENT 'Returns the ECFP4 molecular fingerprint as a 1024-char bitstring from a SMILES string. Returns an error message if the SMILES is invalid.'
 # MAGIC LANGUAGE PYTHON
@@ -116,7 +116,7 @@ dbClient.test_query()
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC CREATE OR REPLACE FUNCTION healthcare_lifesciences.qsar.predict_admet(
+# MAGIC CREATE OR REPLACE FUNCTION healthcare_life_sciences.qsar.predict_admet(
 # MAGIC   smiles STRING COMMENT 'A single SMILES string representing the molecule'
 # MAGIC )
 # MAGIC RETURNS STRING
@@ -129,23 +129,23 @@ dbClient.test_query()
 # MAGIC import json
 # MAGIC import urllib.parse
 # MAGIC import urllib.request
-# MAGIC 
+# MAGIC
 # MAGIC BASE_URL = "https://admet.ai.greenstonebio.com"
 # MAGIC TIMEOUT = 120
-# MAGIC 
+# MAGIC
 # MAGIC if not smiles or not smiles.strip():
 # MAGIC     return json.dumps({"error": "Empty SMILES string"})
-# MAGIC 
+# MAGIC
 # MAGIC cookies = http.cookiejar.CookieJar()
 # MAGIC opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies))
 # MAGIC opener.addheaders = [("User-Agent", "databricks-uc-function/admet-ai")]
-# MAGIC 
+# MAGIC
 # MAGIC # 1) Prime a session so the server issues us a user_id cookie.
 # MAGIC try:
 # MAGIC     opener.open(BASE_URL + "/", timeout=TIMEOUT).read()
 # MAGIC except Exception as e:
 # MAGIC     return json.dumps({"error": f"Failed to reach ADMET-AI: {e}"})
-# MAGIC 
+# MAGIC
 # MAGIC # 2) Submit the SMILES via the same form the web UI uses.
 # MAGIC form = urllib.parse.urlencode({
 # MAGIC     "text-smiles": smiles.strip(),
@@ -161,18 +161,18 @@ dbClient.test_query()
 # MAGIC     opener.open(req, timeout=TIMEOUT).read()
 # MAGIC except Exception as e:
 # MAGIC     return json.dumps({"error": f"Prediction request failed: {e}"})
-# MAGIC 
+# MAGIC
 # MAGIC # 3) Fetch the per-session CSV of predictions.
 # MAGIC try:
 # MAGIC     resp = opener.open(BASE_URL + "/download_predictions", timeout=TIMEOUT)
 # MAGIC     body = resp.read().decode("utf-8")
 # MAGIC except Exception as e:
 # MAGIC     return json.dumps({"error": f"Download failed: {e}"})
-# MAGIC 
+# MAGIC
 # MAGIC rows = list(csv.DictReader(io.StringIO(body)))
 # MAGIC if not rows:
 # MAGIC     return json.dumps({"error": "No predictions returned (invalid SMILES?)"})
-# MAGIC 
+# MAGIC
 # MAGIC row = rows[0]
 # MAGIC out = {}
 # MAGIC for k, v in row.items():

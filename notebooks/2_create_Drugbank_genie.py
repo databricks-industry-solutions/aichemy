@@ -12,7 +12,9 @@ cfg = ModelConfig(development_config="../apps/react-app/config.yml")
 catalog_name = cfg.get("catalog")
 schema_name = cfg.get("schema")
 genie_cfg = cfg.get("genie").get("drugbank",{})
-existing_space_id = genie_cfg.get("space_id")
+# Uncomment if updating genie space
+# existing_space_id = genie_cfg.get("space_id")
+existing_space_id = None
 drugbank_table = genie_cfg.get("table")
 
 print(f"Table: {drugbank_table}")

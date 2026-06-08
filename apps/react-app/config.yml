@@ -1,33 +1,35 @@
-host: https://e2-demo-west.cloud.databricks.com/
-catalog: healthcare_lifesciences
+host: https://db-dais-2026.cloud.databricks.com/
+catalog: healthcare_life_sciences
 schema: qsar
-experiment_id: 976725379793240
+experiment_id: 1785695901517493
 # If no service_principal, defaults to WorkspaceClient() instead
 service_principal:
   aichemy:
     client_id: client_id  
     client_secret: client_secret
-llm_endpoint: databricks-claude-opus-4-5
+llm_endpoint: databricks-claude-sonnet-4-5
 genie:
   drugbank:
-    space_id: 01f068270f5c1f898e11703361dce5b8
-    table: healthcare_lifesciences.qsar.drugbank_full
+    space_id: 01f15ed95ec81b3986aecd3988250ea5
+    table: healthcare_life_sciences.qsar.drugbank_full
 uc_functions:
   chem_utils:
-    - healthcare_lifesciences.qsar.get_embedding
-    - healthcare_lifesciences.qsar.molecule_png_url
-    - healthcare_lifesciences.qsar.predict_admet
+    - healthcare_life_sciences.qsar.get_embedding
+    - healthcare_life_sciences.qsar.molecule_png_url
+    - healthcare_life_sciences.qsar.predict_admet
 uc_connections:
-  web: conn_you_web
-  pubmed: climb_hls_pubmed
-  bio/medrxiv: climb_hls_biorxiv
-  clinical_trials: conn_clinicaltrials
-  openfda: climb_hls_openfda
-  US_census: climb_hls_census
-  cms: climb_hls_cms_coverage
-  bioportal: climb_hls_bioportal
-  biocontext: climb_hls_biocontext
-#  atropos: conn_atropos_mcp
+  web: mcp_you_web
+  pubmed: climb_pubmed
+  opentargets: climb_opentargets
+  bio/medrxiv: climb_preprint
+  clinical_trials: climb_clinicaltrials
+  openfda: climb_openfda
+  US_census: climb_census
+  cms: climb_cms_coverage
+  bioportal: climb_bioportal
+  biocontext: climb_biocontext
+  atropos: mcp_atropos
+  kythera: mcp_kythera
 blacklisted_tools:
   - predict_admet_properties
   - assess_drug_likeness
@@ -42,14 +44,18 @@ external_mcp:
     url: https://glama.ai/endpoints/xb306rnopq/mcp
     scope: aichemy
     secret: pubchem_glama_api
-custom_mcp:
-  opentargets:
-    url: https://opentargets-mcp-2556758628403379.aws.databricksapps.com/mcp
+  # pubmed: 
+  #   url: https://pubmed.mcp.climb.ai:443/mcp
+  #   scope: aichemy
+  #   secret: climb_api
+# custom_mcp:
+  # opentargets:
+  #   url: https://opentargets-mcp-2556758628403379.aws.databricksapps.com/mcp
 retriever:
   zinc_vector_search:
     vs_endpoint: dbdemos_vs_endpoint
-    vs_index: healthcare_lifesciences.qsar.zinc_vs
-    vs_source: healthcare_lifesciences.qsar.zinc15_250k_full
+    vs_index: healthcare_life_sciences.qsar.zinc_vs
+    vs_source: healthcare_life_sciences.qsar.zinc15_250k_full
     embedding: databricks-bge-large-en
     k: 5
     text_column: smiles
@@ -62,9 +68,9 @@ retriever:
     search_type: vector
     tool_description: Search for drug-like chemicals in the ZINC database based on 1024-bit ECFP molecular fingerprint embeddings
 lakebase:
-  project_id: 605906e9-742e-4c1a-aef4-11f64b8a74c2
-  branch_id: br-aged-scene-d1iq7b6x
-  endpoint_id: ep-twilight-union-d1f3jv1k
+  project_id: aichemy
+  branch_id: production
+  endpoint_id: primary
   database: databricks_postgres
   embedding: databricks-gte-large-en
   embedding_dim: 1024
@@ -75,15 +81,17 @@ example_questions:
   - Get the latest review study on the GI toxicity of danuglipron.
 prompts:
   chem_utils: >-
-    You are a python function that can generate 1024-bit ECFP molecular fingerprint embeddings
-    from SMILES. Get the SMILES from the PubChem MCP server. Do not fabricate SMILES.
-    You also have the ability to display molecule image PNG files from PubChem website by CID in markdown.
-    You also have the ability to predict ADMET properties calling an external ChemProp MPNN model. This would require you first look up SMILES as input to the ADMET prediction tool.
+    You are an agent with the following function tools
+    1. get_embedding to generate 1024-bit ECFP molecular fingerprint embeddings from SMILES. Get the SMILES from the PubChem MCP server. Do not fabricate SMILES.
+    2. molecule_png_url to display molecule image PNG files from PubChem website by CID in markdown.
+    3. predict_admet to predict ADMET properties calling a ChemProp MPNN model. This would require you first look up PubChem for SMILES as input to the ADMET prediction tool.
   zinc_vector_search: >-
     You search the ZINC database of 250,000 drug-like chemicals for structural similarity.
     Pass a SMILES string directly to your search tool, not the 1024-bit ECFP bitstring.
   mcp: >-
-    You are a multi-MCP server agent connected to several knowledge bases via MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, etc.
+    You are a multi-MCP server agent connected to several knowledge bases via MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, Kythera, Atropos.
+    Kythera MCP retrieves the medical codes (e.g. SNOMED, ICD, RxNORM, CPT) corresponding to clinical concepts in natural language.
+    Atropos MCP retrieves real-world evidence cohort studies from its Alexandria Library based on natural language requests. 
     Some of these MCP servers may be disabled in the UI so when listing tools, do check if the tool is disabled before listing it.
     If a tool call returns a response containing "not yet implemented", "not implemented", or "coming soon", treat that tool as unavailable for this request.
     Do not retry it. Instead, skip that step, note it as unavailable, and continue with the remaining steps using other available tools.
@@ -99,7 +107,7 @@ prompts:
     2. ZINC vector search agent for similarity search by SMILES (1024-bit ECFP computed internally from SMILES input)
     3. text-to-sql agent querying DrugBank for FDA-approved drugs and their properties
     4. memory agent that saves and deletes long-term user memories
-    5. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, You.com web search,depending on whether they are enabled in the UI
+    5. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, You.com web search, Kythera clinical code mapper and Atropos Health RWE clinical studies library, depending on whether they are enabled in the UI
     Some of these agents or MCP servers may be disabled in the UI so when listing abilities, do check if the agent or MCP server is disabled before listing.
     
     Avoid relying on your trained knowledge. Always use the tools available to you. For example, look up the CID and SMILES from the PubChem MCP server.
