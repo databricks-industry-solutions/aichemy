@@ -410,9 +410,8 @@ def _collect_tool_metadata(mcp_tools: list, cfg: dict) -> dict[str, list[dict]]:
             _meta(t) for t in UCFunctionToolkit(function_names=functions).tools
         ]
     for agent_name, gc in cfg.get("genie", {}).items():
-        table = gc.get("table", "")
         result[agent_name] = [
-            {"name": agent_name, "description": f"Text-to-SQL via Genie on `{table}`"}
+            {"name": agent_name, "description": f"Text-to-SQL in {agent_name} Genie Space"}
         ]
     for agent_name, rc in cfg.get("retriever", {}).items():
         result[agent_name] = [
