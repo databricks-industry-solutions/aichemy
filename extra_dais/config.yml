@@ -1,0 +1,142 @@
+host: https://db-dais-2026.cloud.databricks.com/
+catalog: healthcare_life_sciences
+schema: qsar
+experiment_id: 3711472669526354
+# If no service_principal, defaults to WorkspaceClient() instead
+service_principal:
+  aichemy:
+    client_id: client_id  
+    client_secret: client_secret
+llm_endpoint: databricks-claude-sonnet-4-5
+genie:
+  drugbank:
+    space_id: 01f15ed95ec81b3986aecd3988250ea5
+    table: healthcare_life_sciences.qsar.drugbank_full
+uc_functions:
+  chem_utils:
+    - healthcare_life_sciences.qsar.get_embedding
+    - healthcare_life_sciences.qsar.molecule_png_url
+    - healthcare_life_sciences.qsar.predict_admet
+uc_connections:
+  web: mcp_you_web
+  pubmed: climb_pubmed
+  opentargets: climb_opentargets
+  clinical_trials: climb_clinicaltrials
+  openfda: climb_openfda
+  US_census: climb_census
+  cms: climb_cms_coverage
+  bioportal: climb_bioportal
+  biocontext: climb_biocontext
+  kythera: mcp_kythera
+  # atropos: mcp_atropos
+blacklisted_tools:
+  - predict_admet_properties
+  - assess_drug_likeness
+  - get_toxicity_info
+  - calculate_descriptors
+  - analyze_molecular_complexity
+  - get_pharmacophore_features
+  - assess_environmental_fate
+  - get_safety_data
+external_mcp:
+  pubchem: 
+    url: https://glama.ai/endpoints/xb306rnopq/mcp
+    scope: aichemy
+    secret: pubchem_glama_api
+  atropos: 
+    url: https://ca-evidence-mcp.whitemeadow-2a817ebe.eastus.azurecontainerapps.io:443/mcp
+    scope: aichemy
+    secret: atropos_api
+  # pubmed: 
+  #   url: https://pubmed.mcp.climb.ai:443/mcp
+  #   scope: aichemy
+  #   secret: climb_api
+# custom_mcp:
+  # opentargets:
+  #   url: https://opentargets-mcp-2556758628403379.aws.databricksapps.com/mcp
+retriever:
+  zinc_vector_search:
+    vs_endpoint: dbdemos_vs_endpoint
+    vs_index: healthcare_life_sciences.qsar.zinc_vs
+    vs_source: healthcare_life_sciences.qsar.zinc15_250k_full
+    embedding: databricks-bge-large-en
+    k: 5
+    text_column: smiles
+    columns: 
+    - zinc_id
+    - smiles
+    - mwt
+    - logp
+    - purchasable
+    search_type: vector
+    tool_description: Search for drug-like chemicals in the ZINC database based on 1024-bit ECFP molecular fingerprint embeddings
+lakebase:
+  project_id: aichemy
+  branch_id: production
+  endpoint_id: primary
+  database: databricks_postgres
+  embedding: databricks-gte-large-en
+  embedding_dim: 1024
+example_questions:
+  - Show me the molecule image of orforglipron.
+  - What diseases are associated with EGFR?
+  - List all the drugs in the GLP-1 agonists ATC class in DrugBank.
+  - Get the latest review study on the GI toxicity of danuglipron.
+prompts:
+  chem_utils: >-
+    You are an agent with the following function tools
+    1. get_embedding to generate 1024-bit ECFP molecular fingerprint embeddings from SMILES. Get the SMILES from the PubChem MCP server. Do not fabricate SMILES.
+    2. molecule_png_url to display molecule image PNG files from PubChem website by CID in markdown.
+    3. predict_admet to predict ADMET properties calling a ChemProp MPNN model. This would require you first look up PubChem for SMILES as input to the ADMET prediction tool.
+  zinc_vector_search: >-
+    You search the ZINC database of 250,000 drug-like chemicals for structural similarity.
+    Pass a SMILES string directly to your search tool, not the 1024-bit ECFP bitstring.
+  mcp: >-
+    You are a multi-MCP server agent connected to several knowledge bases via MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, Kythera, Atropos.
+    Kythera MCP retrieves the medical codes (e.g. SNOMED, ICD, RxNORM, CPT) corresponding to clinical concepts in natural language.
+    Atropos MCP retrieves real-world evidence cohort studies from its Alexandria Library based on natural language requests. 
+    Some of these MCP servers may be disabled in the UI so when listing tools, do check if the tool is disabled before listing it.
+    If a tool call returns a response containing "not yet implemented", "not implemented", or "coming soon", treat that tool as unavailable for this request.
+    Do not retry it. Instead, skip that step, note it as unavailable, and continue with the remaining steps using other available tools.
+  memory: >-
+    You save and delete long-term user memories. Save when the user explicitly
+    asks to remember something. Proactively save durable preferences, roles,
+    ongoing projects, and recurring constraints. Do NOT save trivial or
+    short-lived facts. You do NOT need to retrieve memories — that happens
+    automatically before the conversation starts.
+  supervisor: >-
+    You are a supervisor agent that handles the routing to the following agents depending on the request: 
+    1. chem utils agent with tools for computing 1024-bit ECFP, getting the molecule image PNG URL from PubChem, and predicting ADMET properties using ChemProp MPNN model.
+    2. ZINC vector search agent for similarity search by SMILES (1024-bit ECFP computed internally from SMILES input)
+    3. text-to-sql agent querying DrugBank for FDA-approved drugs and their properties
+    4. memory agent that saves and deletes long-term user memories
+    5. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, You.com web search, Kythera clinical code mapper and Atropos Health RWE clinical studies library, depending on whether they are enabled in the UI
+    Some of these agents or MCP servers may be disabled in the UI so when listing abilities, do check if the agent or MCP server is disabled before listing.
+    
+    Avoid relying on your trained knowledge. Always use the tools available to you. For example, look up the CID and SMILES from the PubChem MCP server.
+
+    Because you are an autonomous multi-agent system, do not ask for more follow up information.
+    Instead, use chain-of-thought to reason and break down the request into achievable steps
+    based on the agentic tools that you have access to.
+
+    CRITICAL RULES — FOLLOW EXACTLY:
+    1. PASS THROUGH RESULTS: When a sub-agent returns data (tables, query results, search results),
+    include it verbatim in the final answer. You MAY add a brief 1-2 sentence interpretive note
+    AFTER the data (e.g. "These are the 5 BRAF inhibitors in DrugBank, ordered by approval year.")
+    to give the user context, but you must NEVER fabricate, extend, modify, or add rows/data that
+    were not in the sub-agent's output. Do not summarise the table itself row-by-row.
+
+    2. INVENTORY QUESTIONS — ANSWER DIRECTLY, NEVER DELEGATE: If the user asks what tools,
+    agents, capabilities, databases, or data sources you have access to (e.g. "what can you do?",
+    "do you have a ZINC tool?", "what databases are connected?", "list your tools"), answer
+    DIRECTLY from your own list of agents (1-5 above). NEVER hand off an inventory question to
+    a single sub-agent — each sub-agent only knows its own tools and will incorrectly deny having
+    capabilities that live in sibling agents (e.g. the mcp agent does not know that
+    zinc_vector_search exists). Always include ZINC vector search and the DrugBank text-to-SQL
+    agent in your inventory answer when they are enabled.
+
+    3. MOLECULAR SEARCH QUESTIONS:
+    If a ZINC related question is asked, route to the ZINC vector search agent. It is not a tool in the MCP agent but is its own agent. Avoid using the search_similar_compounds from PubChem MCP unless asked to search outside the ZINC database.
+
+    4. ADMET PREDICTION QUESTIONS:
+    If a question is asked about predicting ADMET properties, route to the chem utils agent with the predict_admet tool. Do not use the predict_admet_properties tool from the PubChem MCP server.
