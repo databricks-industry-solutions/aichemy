@@ -4,7 +4,7 @@ mlflow>=3.3.2
 databricks-ai-bridge[agent-server]>=0.18.0
 databricks-langchain[memory]>=0.17.0
 databricks-mcp
-databricks-vectorsearch
+databricks-vectorsearch<0.74
 langchain-mcp-adapters==0.1.14 
 # if anthropic models
 # https://github.com/langchain-ai/langchain-mcp-adapters/issues/397
