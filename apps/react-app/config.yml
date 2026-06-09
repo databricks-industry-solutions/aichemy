@@ -6,18 +6,10 @@ experiment_id: 3711472669526354
 service_principal:
   aichemy:
     client_id: client_id
-    client_secret: client_secret2
-llm_endpoint: databricks-claude-sonnet-4-5
-    client_id: client_id  
     client_secret: client_secret
 llm_endpoint: databricks-claude-sonnet-4-5
 genie:
   drugbank:
-    space_id: 01f068270f5c1f898e11703361dce5b8
-    table: healthcare_lifesciences.qsar.drugbank_full
-  claims:
-    space_id: 01ef5a4e50431b23aa2edf8674316dff
-    table: healthverity_claims_sample_patient_dataset.hv_claims_sample.diagnosis
     space_id: 01f15ed95ec81b3986aecd3988250ea5
     table: healthcare_life_sciences.qsar.drugbank_full
   claims:
