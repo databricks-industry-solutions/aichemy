@@ -254,7 +254,7 @@ def _build_agent(cfg: dict) -> StateGraph:
                 (e.g. 1011..00) which is the concatenated string form of a list of 1024 integers.
                 """
                 bitstring = uc_fn_client.execute_function(
-                    function_name="healthcare_lifesciences.qsar.get_embedding",
+                    function_name="healthcare_life_sciences.qsar.get_embedding",
                     parameters={"smiles": smiles}
                 )
                 query_vector = [int(c) for c in bitstring.value]
