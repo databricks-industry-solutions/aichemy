@@ -5,13 +5,16 @@ experiment_id: 976725379793240
 # If no service_principal, defaults to WorkspaceClient() instead
 service_principal:
   aichemy:
-    client_id: client_id  
-    client_secret: client_secret
-llm_endpoint: databricks-claude-opus-4-5
+    client_id: client_id
+    client_secret: client_secret2
+llm_endpoint: databricks-claude-sonnet-4-5
 genie:
   drugbank:
     space_id: 01f068270f5c1f898e11703361dce5b8
     table: healthcare_lifesciences.qsar.drugbank_full
+  # claims:
+  #   space_id: 01f1638f40e41c5793e0f5a459bec6de
+  #   table: healthcare_lifesciences.claims.silver_claims_medical
 uc_functions:
   chem_utils:
     - healthcare_lifesciences.qsar.get_embedding
@@ -19,16 +22,16 @@ uc_functions:
     - healthcare_lifesciences.qsar.predict_admet
 uc_connections:
   web: conn_you_web
-  pubmed: climb_pubmed
-  bio/medrxiv: climb_preprint
-  clinical_trials: conn_clinicaltrials
-  openfda: climb_openfda
-  US_census: climb_census
+  pubmed: climb_hls_pubmed
+  opentargets: climb_hls_opentargets
+  clinical_trials: climb_hls_clinicaltrials
+  openfda: climb_hls_openfda
+  US_census: climb_hls_census
   cms: climb_hls_cms_coverage
-  bioportal: climb_bioportal
-  biocontext: climb_biocontext
-  atropos: mcp_atropos
-  kythera: mcp_kythera
+  bioportal: climb_hls_bioportal
+  biocontext: climb_hls_biocontext
+  kythera: conn_kythera_mcp
+  # atropos: conn_atropos_mcp
 blacklisted_tools:
   - predict_admet_properties
   - assess_drug_likeness
@@ -43,9 +46,17 @@ external_mcp:
     url: https://glama.ai/endpoints/xb306rnopq/mcp
     scope: aichemy
     secret: pubchem_glama_api
-custom_mcp:
-  opentargets:
-    url: https://opentargets-mcp-2556758628403379.aws.databricksapps.com/mcp
+  atropos: 
+    url: https://ca-evidence-mcp.whitemeadow-2a817ebe.eastus.azurecontainerapps.io:443/mcp
+    scope: aichemy
+    secret: atropos_api
+  # pubmed: 
+  #   url: https://pubmed.mcp.climb.ai:443/mcp
+  #   scope: aichemy
+  #   secret: climb_api
+# custom_mcp:
+  # opentargets:
+  #   url: https://opentargets-mcp-2556758628403379.aws.databricksapps.com/mcp
 retriever:
   zinc_vector_search:
     vs_endpoint: dbdemos_vs_endpoint
@@ -76,15 +87,17 @@ example_questions:
   - Get the latest review study on the GI toxicity of danuglipron.
 prompts:
   chem_utils: >-
-    You are a python function that can generate 1024-bit ECFP molecular fingerprint embeddings
-    from SMILES. Get the SMILES from the PubChem MCP server. Do not fabricate SMILES.
-    You also have the ability to display molecule image PNG files from PubChem website by CID in markdown.
-    You also have the ability to predict ADMET properties calling an external ChemProp MPNN model. This would require you first look up SMILES as input to the ADMET prediction tool.
+    You are an agent with the following function tools
+    1. get_embedding to generate 1024-bit ECFP molecular fingerprint embeddings from SMILES. Get the SMILES from the PubChem MCP server. Do not fabricate SMILES.
+    2. molecule_png_url to display molecule image PNG files from PubChem website by CID in markdown.
+    3. predict_admet to predict ADMET properties calling a ChemProp MPNN model. This would require you first look up PubChem for SMILES as input to the ADMET prediction tool.
   zinc_vector_search: >-
     You search the ZINC database of 250,000 drug-like chemicals for structural similarity.
     Pass a SMILES string directly to your search tool, not the 1024-bit ECFP bitstring.
   mcp: >-
-    You are a multi-MCP server agent connected to several knowledge bases via MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, etc.
+    You are a multi-MCP server agent connected to several knowledge bases via MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, Kythera, Atropos.
+    Kythera MCP retrieves the medical codes (e.g. SNOMED, ICD, RxNORM, CPT) corresponding to clinical concepts in natural language.
+    Atropos MCP retrieves real-world evidence cohort studies from its Alexandria Library based on natural language requests. 
     Some of these MCP servers may be disabled in the UI so when listing tools, do check if the tool is disabled before listing it.
     If a tool call returns a response containing "not yet implemented", "not implemented", or "coming soon", treat that tool as unavailable for this request.
     Do not retry it. Instead, skip that step, note it as unavailable, and continue with the remaining steps using other available tools.
@@ -99,8 +112,9 @@ prompts:
     1. chem utils agent with tools for computing 1024-bit ECFP, getting the molecule image PNG URL from PubChem, and predicting ADMET properties using ChemProp MPNN model.
     2. ZINC vector search agent for similarity search by SMILES (1024-bit ECFP computed internally from SMILES input)
     3. text-to-sql agent querying DrugBank for FDA-approved drugs and their properties
-    4. memory agent that saves and deletes long-term user memories
-    5. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, You.com web search,depending on whether they are enabled in the UI
+    4. text-to-sql agent querying medical and pharmacy claims data. When cohort building, use the Kythera MCP to translate clinical concepts to medical codes for cohort definitions.
+    5. memory agent that saves and deletes long-term user memories
+    6. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, You.com web search, Kythera clinical code mapper and Atropos Health RWE clinical studies library, depending on whether they are enabled in the UI
     Some of these agents or MCP servers may be disabled in the UI so when listing abilities, do check if the agent or MCP server is disabled before listing.
     
     Avoid relying on your trained knowledge. Always use the tools available to you. For example, look up the CID and SMILES from the PubChem MCP server.

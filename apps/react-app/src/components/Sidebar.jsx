@@ -23,6 +23,7 @@ const MCP_DISPLAY = {
   zinc_vector_search: '🔍 ZINC Search',
   // genie
   drugbank:              '💊 DrugBank',
+  claims:                '💊 Claims',
   // uc_functions
   chem_utils:            '🛠️ Chem Utils',
   web:                   '🌐 Web Search'
