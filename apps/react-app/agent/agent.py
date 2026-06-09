@@ -70,6 +70,40 @@ def _all_mcp_names(cfg: dict) -> list[str]:
     return names
 
 
+def _build_genie_tool(agent_name, genie_config, ws_client, StructuredTool, Genie):
+    """Wrap a Genie Space as a direct LangChain tool for the supervisor.
+
+    Calling Genie as a tool (rather than as a GenieAgent sub-agent) removes the
+    extra ``transfer_to_<agent>`` routing hop. The underlying ``ask_question``
+    call still emits the ``poll_query_results`` span that carries the SQL, and
+    the tool returns the reasoning + SQL + result so they surface directly under
+    the tool call in the UI.
+    """
+    genie = Genie(genie_config["space_id"], client=ws_client)
+    table = genie_config.get("table", "")
+    description = (
+        f"Text-to-SQL via Genie. Translates a natural-language question into SQL "
+        f"and queries the `{table}` table. Use for questions about {agent_name} data."
+    )
+
+    def _run(question: str) -> str:
+        resp = genie.ask_question(question)
+        parts = []
+        if getattr(resp, "description", None):
+            parts.append(f"Description: {resp.description}")
+        if getattr(resp, "query", None):
+            parts.append(f"SQL:\n{resp.query}")
+        result = resp.result if getattr(resp, "result", None) is not None else ""
+        parts.append(f"Result:\n{result}")
+        return "\n\n".join(parts)
+
+    return StructuredTool.from_function(
+        func=_run,
+        name=agent_name,
+        description=description,
+    )
+
+
 def _make_runtime_cfg(llm_endpoint: str | None, enabled_mcps: list[str] | None) -> dict:
     """Return a deep copy of _cfg patched with the given runtime overrides."""
     import copy
@@ -163,10 +197,11 @@ def _build_agent(cfg: dict) -> StateGraph:
         MCPServer,
     )
     from databricks_langchain import VectorSearchRetrieverTool
-    from databricks_langchain.genie import GenieAgent
+    from databricks_ai_bridge.genie import Genie
     from databricks_langchain.uc_ai import UCFunctionToolkit
     from langchain.agents import create_agent
     from langchain.tools import tool
+    from langchain_core.tools import StructuredTool
     from langgraph_supervisor import create_supervisor
     from unitycatalog.ai.core.databricks import DatabricksFunctionClient
 
@@ -187,11 +222,13 @@ def _build_agent(cfg: dict) -> StateGraph:
         )
         function_agents.append(function_agent)
 
-    # --- DrugBank Genie agent ---
-    genie_agents = []
+    # --- Genie text-to-SQL tools (called directly by the supervisor) ---
+    # Exposing Genie as a tool instead of a GenieAgent sub-agent removes the extra
+    # `transfer_to_<agent>` handoff hop: the supervisor calls Genie directly. The
+    # underlying ask_question() still emits the poll_query_results span (with SQL).
+    genie_tools = []
     for agent_name, genie_config in cfg["genie"].items():
-        genie_agent = GenieAgent(genie_config["space_id"], genie_agent_name=agent_name)
-        genie_agents.append(genie_agent)
+        genie_tools.append(_build_genie_tool(agent_name, genie_config, ws_client, StructuredTool, Genie))
 
     # --- ZINC vector search agent ---
     retriever_agents = []
@@ -276,8 +313,9 @@ def _build_agent(cfg: dict) -> StateGraph:
 
     # --- Supervisor ---
     workflow = create_supervisor(
-        [mcp_agent, mem_agent] + function_agents + genie_agents + retriever_agents,
+        [mcp_agent, mem_agent] + function_agents + retriever_agents,
         model=llm,
+        tools=genie_tools,
         prompt=cfg["prompts"]["supervisor"],
         output_mode="last_message",
         add_handoff_messages=False,
