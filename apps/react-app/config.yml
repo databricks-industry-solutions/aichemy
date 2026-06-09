@@ -1,7 +1,7 @@
 host: https://db-dais-2026.cloud.databricks.com/
 catalog: healthcare_life_sciences
 schema: qsar
-experiment_id: 1785695901517493
+experiment_id: 3711472669526354
 # If no service_principal, defaults to WorkspaceClient() instead
 service_principal:
   aichemy:
@@ -21,15 +21,14 @@ uc_connections:
   web: mcp_you_web
   pubmed: climb_pubmed
   opentargets: climb_opentargets
-  bio/medrxiv: climb_preprint
   clinical_trials: climb_clinicaltrials
   openfda: climb_openfda
   US_census: climb_census
   cms: climb_cms_coverage
   bioportal: climb_bioportal
   biocontext: climb_biocontext
-  atropos: mcp_atropos
   kythera: mcp_kythera
+  # atropos: mcp_atropos
 blacklisted_tools:
   - predict_admet_properties
   - assess_drug_likeness
@@ -44,6 +43,10 @@ external_mcp:
     url: https://glama.ai/endpoints/xb306rnopq/mcp
     scope: aichemy
     secret: pubchem_glama_api
+  atropos: 
+    url: https://ca-evidence-mcp.whitemeadow-2a817ebe.eastus.azurecontainerapps.io:443/mcp
+    scope: aichemy
+    secret: atropos_api
   # pubmed: 
   #   url: https://pubmed.mcp.climb.ai:443/mcp
   #   scope: aichemy
