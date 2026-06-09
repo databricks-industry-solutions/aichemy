@@ -112,7 +112,7 @@ prompts:
     1. chem utils agent with tools for computing 1024-bit ECFP, getting the molecule image PNG URL from PubChem, and predicting ADMET properties using ChemProp MPNN model.
     2. ZINC vector search agent for similarity search by SMILES (1024-bit ECFP computed internally from SMILES input)
     3. text-to-sql agent querying DrugBank for FDA-approved drugs and their properties
-    4. text-to-sql agent querying medical and pharmacy claims for building patient cohorts
+    4. text-to-sql agent querying medical and pharmacy claims data. When cohort building, use the Kythera MCP to 
     5. memory agent that saves and deletes long-term user memories
     6. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, You.com web search, Kythera clinical code mapper and Atropos Health RWE clinical studies library, depending on whether they are enabled in the UI
     Some of these agents or MCP servers may be disabled in the UI so when listing abilities, do check if the agent or MCP server is disabled before listing.
