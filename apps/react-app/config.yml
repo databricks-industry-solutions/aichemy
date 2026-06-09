@@ -12,9 +12,9 @@ genie:
   drugbank:
     space_id: 01f068270f5c1f898e11703361dce5b8
     table: healthcare_lifesciences.qsar.drugbank_full
-  # claims:
-  #   space_id: 01f1638f40e41c5793e0f5a459bec6de
-  #   table: healthcare_lifesciences.claims.silver_claims_medical
+  claims:
+    space_id: 01ef5a4e50431b23aa2edf8674316dff
+    table: healthverity_claims_sample_patient_dataset.hv_claims_sample.diagnosis
 uc_functions:
   chem_utils:
     - healthcare_lifesciences.qsar.get_embedding

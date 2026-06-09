@@ -157,7 +157,7 @@ export default function ChatPanel({
           </a>
           <a
             className="header-btn"
-            href="https://db-dais-2026.cloud.databricks.com/apps-v2/app/aichemy/overview?o=7474650217702955"
+            href="https://e2-demo-west.cloud.databricks.com/apps-v2/app/aichemy/overview?o=2556758628403379"
             target="_blank"
             rel="noopener noreferrer"
             title="View code"
