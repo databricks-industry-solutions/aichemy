@@ -12,6 +12,9 @@ genie:
   drugbank:
     space_id: 01f15ed95ec81b3986aecd3988250ea5
     table: healthcare_life_sciences.qsar.drugbank_full
+  claims:
+    space_id: 01f1638f40e41c5793e0f5a459bec6de
+    table: healthcare_life_sciences.claims.silver_claims_medical
 uc_functions:
   chem_utils:
     - healthcare_life_sciences.qsar.get_embedding
@@ -109,8 +112,9 @@ prompts:
     1. chem utils agent with tools for computing 1024-bit ECFP, getting the molecule image PNG URL from PubChem, and predicting ADMET properties using ChemProp MPNN model.
     2. ZINC vector search agent for similarity search by SMILES (1024-bit ECFP computed internally from SMILES input)
     3. text-to-sql agent querying DrugBank for FDA-approved drugs and their properties
-    4. memory agent that saves and deletes long-term user memories
-    5. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, You.com web search, Kythera clinical code mapper and Atropos Health RWE clinical studies library, depending on whether they are enabled in the UI
+    4. text-to-sql agent querying medical and pharmacy claims for building patient cohorts
+    5. memory agent that saves and deletes long-term user memories
+    6. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, You.com web search, Kythera clinical code mapper and Atropos Health RWE clinical studies library, depending on whether they are enabled in the UI
     Some of these agents or MCP servers may be disabled in the UI so when listing abilities, do check if the agent or MCP server is disabled before listing.
     
     Avoid relying on your trained knowledge. Always use the tools available to you. For example, look up the CID and SMILES from the PubChem MCP server.
