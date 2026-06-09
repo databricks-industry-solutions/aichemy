@@ -186,18 +186,23 @@ export default function ChatPanel({
                 <li>Click on the <strong>+ New Project</strong> button to start a new conversation.</li>
               </ol>
 
+              <h4>Demo tips</h4>
+              <ul>
+                <li>Click on the <strong>Blog</strong> button and show the architecture diagram, as well as get the <a href="https://aichemy-1.onrender.com" target="_blank" rel="noopener noreferrer">public app</a> and code from the blog.</li>
+                <li>Click on the <strong>Code</strong> button to go to the app page for experiment traces, source code, logs.</li>
+              </ul>
 
               <h4>Suggested prompts</h4>
                 <h5>Persona: Researcher</h5>
                 <ol>
                   <li>(First example on New Project page) Show me the molecule image of orforglipron.</li>
                   <li>Find in the ZINC vector search 3 molecules most similar to it</li>
-                  <li>Predict the ADMET properties of the molecule</li>
+                  <li>Predict the ADMET properties of the most similar molecule</li>
                 </ol>
                 <br />
                 <h5>Persona: Commercial Analyst</h5>
                 <ol>
-                  <li>Select PubMed, OpenTargets, Clinical Trials, CMS MCP servers and hit <strong>Refresh</strong>.</li>
+                  <li>Select Web, PubMed, OpenTargets, Clinical Trials, Census, CMS MCP servers and hit <strong>Refresh</strong>.</li>
                   <li>Choose the <strong>Market Sizing</strong> workflow and input the drug <strong>orforglipron</strong></li>
                 </ol>
 
@@ -221,6 +226,7 @@ export default function ChatPanel({
               <p>
                 <ul>
                   <li>Avoid changing projects while waiting for a response. The response may sometimes show up in the wrong project.</li>
+                  <li>Click on the <strong>Code</strong> button to check the app logs for errors.</li>
                   <li>MCP status in orange or red means that the MCP server may be down. </li>
                 </ul>
                 <ol>        
