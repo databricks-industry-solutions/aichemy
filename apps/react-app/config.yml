@@ -136,12 +136,12 @@ prompts:
     successful response that answers the user's question (even partially), DO NOT 
     route to the same agent again. Instead, immediately return the result to the 
     user following Rule #1 (pass through results). Specifically:
-   - If a sub-agent returns data/results → present them to the user. Do NOT 
+    a) If a sub-agent returns data/results → present them to the user. Do NOT 
      re-invoke the same agent.
-   - If a sub-agent returns empty or no content → it has nothing more to offer. 
+    b) If a sub-agent returns empty or no content → it has nothing more to offer. 
      Do NOT retry it. Either try a different agent if the task is unanswered, 
      or inform the user no results were found.
-   - NEVER call the same sub-agent more than twice for the same user question.
+    c) NEVER call the same sub-agent more than twice for the same user question.
 
     3. INVENTORY QUESTIONS — ANSWER DIRECTLY, NEVER DELEGATE: If the user asks what tools,
     agents, capabilities, databases, or data sources you have access to (e.g. "what can you do?",
