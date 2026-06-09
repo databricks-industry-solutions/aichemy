@@ -19,15 +19,16 @@ uc_functions:
     - healthcare_lifesciences.qsar.predict_admet
 uc_connections:
   web: conn_you_web
-  pubmed: climb_hls_pubmed
-  bio/medrxiv: climb_hls_biorxiv
+  pubmed: climb_pubmed
+  bio/medrxiv: climb_preprint
   clinical_trials: conn_clinicaltrials
-  openfda: climb_hls_openfda
-  US_census: climb_hls_census
+  openfda: climb_openfda
+  US_census: climb_census
   cms: climb_hls_cms_coverage
-  bioportal: climb_hls_bioportal
-  biocontext: climb_hls_biocontext
-#  atropos: conn_atropos_mcp
+  bioportal: climb_bioportal
+  biocontext: climb_biocontext
+  atropos: mcp_atropos
+  kythera: mcp_kythera
 blacklisted_tools:
   - predict_admet_properties
   - assess_drug_likeness

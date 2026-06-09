@@ -72,7 +72,7 @@ external_mcp:
 
 # --- Vector Search retriever subagents ---
 retriever:
-  zinc_molecular_search:
+  zinc_vector_search:
     vs_endpoint: my_vs_endpoint
     vs_index: my_catalog.my_schema.zinc_vs
     vs_source: my_catalog.my_schema.zinc_table

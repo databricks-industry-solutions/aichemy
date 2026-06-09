@@ -17,6 +17,8 @@ const MCP_DISPLAY = {
   cms:                   '📋 CMS Coverage',
   bioportal:             '🔗 BioPortal',
   biocontext:            '🧬 BioContext',
+  kythera:               '🇰 Kythera',
+  atropos:               '🇦 Atropos Health',
   // retriever
   zinc_vector_search: '🔍 ZINC Search',
   // genie
