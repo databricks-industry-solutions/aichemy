@@ -181,7 +181,7 @@ export default function ChatPanel({
             <div className="help-dialog-body">
               <h4>Recommended demo setup</h4>
               <ol>
-                <li>Select Claude Sonnet 4.5, PubChem, ZINC and Chem Utils.</li>
+                <li>Select Claude Sonnet 4.5, Web MCP.</li>
                 <li>Hit <strong>Refresh</strong>.</li>
                 <li>Click on the <strong>+ New Project</strong> button to start a new conversation.</li>
               </ol>
@@ -195,6 +195,7 @@ export default function ChatPanel({
               <h4>Suggested prompts</h4>
                 <h5>Persona: Life Sciences</h5>
                 <ol>
+                  <li>Select Claude Sonnet 4.5, PubChem, ZINC and Chem Utils and hit <strong>Refresh</strong>.</li>
                   <li>(First example on New Project page) <i><strong>Show me the molecule image of orforglipron</strong></i>.</li>
                   <li><i><strong>Find in the ZINC vector search 3 molecules most similar to it</strong></i>.</li>
                   <li><i><strong>Predict the ADMET properties of the most similar molecule</strong></i></li>
@@ -202,8 +203,8 @@ export default function ChatPanel({
                 <br />
                 <h5>Persona: Clinical</h5>
                 <ol>
-                  <li>Select Web, Kythera, Atropos, Claims MCP servers and hit <strong>Refresh</strong>.</li>
-                  <li><i><strong>What is the percentage of T2DM patients on GLP-1 based on claims?</strong></i></li>
+                  <li>Select Atropos, Claims, Kythera, PubMed, WebMCP servers and hit <strong>Refresh</strong>.</li>
+                  <li>(Third example on New Project page) <i><strong>What is the percentage of T2DM patients on GLP-1 based on claims?</strong></i></li>
                   <li>Choose the <strong>Get RWE</strong> workflow and input <i><strong>the prevalence of GLP-1 users among T2DM patients</strong></i></li>
                   <li><i><strong>What are the NDC codes for Foundayo?</strong></i></li>
                 </ol>

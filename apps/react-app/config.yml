@@ -105,7 +105,7 @@ lakebase:
 example_questions:
   - Show me the molecule image of orforglipron.
   - What diseases are associated with EGFR?
-  - List all the drugs in the GLP-1 agonists ATC class in DrugBank.
+  - What is the percentage of T2DM patients on GLP-1 based on claims?
   - Get the latest review study on the GI toxicity of danuglipron.
 prompts:
   chem_utils: >-
