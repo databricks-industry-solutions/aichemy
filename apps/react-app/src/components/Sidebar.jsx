@@ -87,6 +87,10 @@ export default function Sidebar({
     }
   }
 
+  const sortedMcpServers = [...mcpServers].sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base' })
+  )
+
   return (
     <aside className="sidebar">
       {/* Logo */}
@@ -190,7 +194,7 @@ export default function Sidebar({
           {mcpServers.length === 0 && (
             <div className="mcp-item-empty">Loading…</div>
           )}
-          {mcpServers.map(srv => {
+          {sortedMcpServers.map(srv => {
             const isEnabled = enabledGroups[srv] !== false
             return (
               <label

@@ -193,17 +193,19 @@ export default function ChatPanel({
               </ul>
 
               <h4>Suggested prompts</h4>
-                <h5>Persona: Researcher</h5>
+                <h5>Persona: Life Sciences</h5>
                 <ol>
-                  <li>(First example on New Project page) Show me the molecule image of orforglipron.</li>
-                  <li>Find in the ZINC vector search 3 molecules most similar to it</li>
-                  <li>Predict the ADMET properties of the most similar molecule</li>
+                  <li>(First example on New Project page) <i><strong>Show me the molecule image of orforglipron</strong></i>.</li>
+                  <li><i><strong>Find in the ZINC vector search 3 molecules most similar to it</strong></i>.</li>
+                  <li><i><strong>Predict the ADMET properties of the most similar molecule</strong></i></li>
                 </ol>
                 <br />
-                <h5>Persona: Commercial Analyst</h5>
+                <h5>Persona: Clinical</h5>
                 <ol>
-                  <li>Select Web, PubMed, OpenTargets, Clinical Trials, Census, CMS MCP servers and hit <strong>Refresh</strong>.</li>
-                  <li>Choose the <strong>Market Sizing</strong> workflow and input the drug <strong>orforglipron</strong></li>
+                  <li>Select Web, Kythera, Atropos, Claims MCP servers and hit <strong>Refresh</strong>.</li>
+                  <li><i><strong>What is the percentage of T2DM patients on GLP-1 based on claims?</strong></i></li>
+                  <li>Choose the <strong>Get RWE</strong> workflow and input <i><strong>the prevalence of GLP-1 users among T2DM patients</strong></i></li>
+                  <li><i><strong>What are the NDC codes for Foundayo?</strong></i></li>
                 </ol>
 
               <h4>Settings</h4>
@@ -236,6 +238,8 @@ export default function ChatPanel({
                 </ol>
               </p>
               <p>Check <a href={`${window.location.origin}/api/health`} target="_blank" rel="noopener noreferrer">{window.location.origin}/api/health</a> for more error details.</p>
+
+              <p className="help-version">Version 2.4</p>
             </div>
           </div>
         </div>

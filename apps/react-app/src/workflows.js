@@ -72,6 +72,30 @@ export const WORKFLOWS = [
       'Size the market oppportunities for ${workflowInput}. Consider potential indications, coverage, eligible patient demographics, and competitor landscape.',
     input_placeholder: 'your input, e.g., semaglutide, vemurafenib',
   },
+  {
+    name: 'cohort-definition',
+    label: 'Cohort Definition',
+    caption: 'Define a patient cohort using clinical concepts and codes',
+    canned_prompt:
+      'Get the cohort definition in terms of billing codes of ${workflowInput}.',
+    input_placeholder: 'your input, e.g., adults who started on GLP-1 drugs after a T2DM diagnosis',
+  },
+  // {
+  //   name: 'cohort-query',
+  //   label: 'Cohort Query',
+  //   caption: 'Query claims data given a cohort definition',
+  //   canned_prompt:
+  //     'Query the cohort in the claims genie data with ${workflowInput}. If the query involves multiple tables, query one table at a time and then join the results appropriately',
+  //   input_placeholder: 'your input, e.g., E11.x for T2DM',
+  // },
+  {
+    name: 'get-rwe',
+    label: 'Get RWE',
+    caption: 'Get real-world evidence studies for a patient cohort',
+    canned_prompt:
+      'What does the evidence say about ${workflowInput}?',
+    input_placeholder: 'your input, e.g., the glycemic outcomes of patients on semaglutide vs tirzepatide',
+  },
 ]
 
 export const WORKFLOWS_BY_NAME = Object.fromEntries(
