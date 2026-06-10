@@ -1,7 +1,7 @@
 host: https://db-dais-2026.cloud.databricks.com/
 catalog: healthcare_life_sciences
 schema: qsar
-experiment_id: 3711472669526354
+experiment_id: 4126271400766080
 # If no service_principal, defaults to WorkspaceClient() instead
 service_principal:
   aichemy:
