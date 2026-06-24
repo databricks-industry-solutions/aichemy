@@ -24,7 +24,7 @@ variables:
 
   llm_endpoint:
     description: "LLM model serving endpoint"
-    default: "databricks-claude-opus-4-5"
+    default: "databricks-claude-sonnet-4-5"
 
   secret_scope:
     description: "Secret scope for app SP credentials and MCP bearer tokens"
@@ -130,7 +130,7 @@ resources:
       tasks:
         - task_key: put_secrets
           notebook_task:
-            notebook_path: ./notebooks/0_setup_secrets.py
+            notebook_path: ./notebooks/0_setup.py
 
     data_setup:
       name: "[${bundle.target}] AiChemy – Load data and create vector search"
