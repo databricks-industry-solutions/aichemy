@@ -44,7 +44,7 @@ table_description = "Drugbank dataset as used in ADMET-AI in 10.1093/bioinformat
 # COMMAND ----------
 
 # MAGIC %sh
-# MAGIC # Open terminal and copy from local to Vol
+# MAGIC # Download drugbank_approved.csv from https://zenodo.org/records/10372419. Then copy from local to Vol
 # MAGIC cp /Workspace/Repos/yen.low@databricks.com/aichemy/data/drugbank_approved.csv /Volumes/aichemy2_catalog/aichemy/data/.
 
 # COMMAND ----------
