@@ -30,10 +30,30 @@ source .venv/bin/activate
 uv pip install -r apps/react-app/requirements.txt
 ```
 
-### 2. Customize [`config.yml`](apps/react-app/config.yml) to your assets
-The repo reads [`config.yml`](apps/react-app/config.yml) at startup and creates subagents loaded with existing genie, retriever, UC functions, MCP servers and/or Lakebase memory tools and assembles them into a langgraph supervisor with the appropriate subagent and supervisor prompts.
+### Other prequisites
+`uv` will install the above [requirements.txt](apps/react-app/requirements.txt). However, you will still need the following:
+1. [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install)
+Ensure you can [authenticate](https://docs.databricks.com/aws/en/dev-tools/cli/authentication) into your Databricks Workspace.
+```
+databricks auth login
+```
+2. Create [secret scope](https://docs.databricks.com/aws/en/dev-tools/cli/reference/secrets-commands#databricks-secrets-put-secret) named `aichemy` with the following keys:
 
-It assumes that the assets defined in [`config.yml`](apps/react-app/config.yml) already exists. See example [notebooks](notebooks) and [blog](http://databricks.com/blog/aichemy-next-generation-agent-mcp-skills-and-custom-data-drug-discovery) on how to set up the various assets.
+| Secret key | Purpose |
+|---|---|
+| `client_id` | App service principal client ID (Lakebase, M2M auth) |
+| `client_secret` | App service principal client secret |
+| `external_mcp_token` | Bearer token for any external MCP, if any |
+
+Grant the app SP read access to the above keys.
+
+3. Lakebase Autoscaling project for agent and web memory
+> **Note:** `lakebase.project_id` must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens (RFC 1123). If you already created a project manually, set the IDs in `config.yml` to match before syncing.
+
+### 2. Customize [`config.yml`](apps/react-app/config.yml) to your assets
+The repo reads [`config.yml`](apps/react-app/config.yml) at startup and creates subagents loaded with **existing** genie, retriever, UC functions, MCP servers and/or Lakebase memory tools and assembles them into a langgraph supervisor with the appropriate subagent and supervisor prompts.
+
+It **assumes that the assets defined in [`config.yml`](apps/react-app/config.yml) already exists**. See example [notebooks](notebooks) and [blog](http://databricks.com/blog/aichemy-next-generation-agent-mcp-skills-and-custom-data-drug-discovery) on how to set up the various assets.
 
 A. [OPTIONAL] Change [`logo.svg`](apps/react-app/public/logo.svg) to your app logo. <br>
 B. [OPTIONAL] Add custom skills to the [`skills`](apps/react-app/skills) folder. <br>
@@ -125,15 +145,7 @@ prompts:
 ```
 
 ### 3. Run locally
-Do local development for faster iteration of your agent app.
-
-**Prerequisite:** [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/install) <br>
-Ensure you can [authenticate](https://docs.databricks.com/aws/en/dev-tools/cli/authentication) into your Databricks Workspace.
-```
-databricks auth login
-```
-
-Start the local servers.
+Do local development for faster iteration of your agent app. Start the local servers.
 ```
 cd apps/react-app
 
@@ -180,40 +192,7 @@ databricks sync --watch . /Workspace/Users/my-email@org.com/my-app
 databricks apps deploy my-app-name \
    --source-code-path /Workspace/Users/my-email@org.com/my-app
 ```
-
 Remember to grant the app SP the appropriate permissions to your underlying assets (Experiment and secret scope)
-
-### 4. Databricks Assets Bundle
-
-The project uses Databricks Asset Bundles. [`databricks.yml`](databricks.yml) is generated from [`config.yml`](apps/react-app/config.yml) by [`gen_databricksyaml.py`](gen_databricksyaml.py). The generator syncs workspace host, catalog/schema, experiment, LLM endpoint, and the `lakebase` block (`project_id`, `branch_id`, `endpoint_id`, `database`). Deploy with:
-
-```bash
-./deploy.sh
-```
-
-Or use the Asset Bundle Editor in the Databricks UI — clone the repo as a Git Folder, open the bundle editor, and click **Deploy**.
-
-#### Secret scope
-
-The bundle creates the `aichemy` secret scope and grants the app read access to these keys:
-
-| Secret key | Purpose |
-|---|---|
-| `client_id` | App service principal client ID (Lakebase, M2M auth) |
-| `client_secret` | App service principal client secret |
-| `pubchem_glama_api` | Bearer token for PubChem MCP (Glama) |
-
-Secret **values** are not stored in the bundle. Populate them after the first deploy using the [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/reference/secrets-commands#databricks-secrets-put-secret).
-```
-databricks secrets put-secret SCOPE KEY [flags]
-```
-
-#### Lakebase project
-
-The bundle creates a Lakebase Autoscaling project (plus branch and endpoint) from the `lakebase` section in [`config.yml`](apps/react-app/config.yml). After editing those values, run `./deploy.sh --sync-only` (or `python3 gen_databricksyaml.py`) before deploy. The app is granted `CAN_CONNECT_AND_CREATE` on the configured database.
-
-> **Note:** `lakebase.project_id` must start with a lowercase letter and contain only lowercase letters, numbers, and hyphens (RFC 1123). If you already created a project manually, set the IDs in `config.yml` to match before syncing.
-
 
 ## Supported Subagent Types
 
