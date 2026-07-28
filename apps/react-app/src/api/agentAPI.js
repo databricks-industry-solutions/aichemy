@@ -326,7 +326,7 @@ export async function fetchDbStatus() {
 }
 
 /**
- * Fetch external MCP server health status (OpenTargets, PubChem, PubMed).
+ * Fetch external MCP server health status (OpenTargets, ChEMBL, PubMed).
  * @returns {Promise<Object>} Map of server name -> {ok, status_code, status, detail}
  */
 export async function fetchMcpStatus() {

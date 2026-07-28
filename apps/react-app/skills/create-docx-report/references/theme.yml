@@ -1,0 +1,28 @@
+# Machine-readable theme loaded by the create_docx tool.
+# Human-readable docs: formatting.md
+# Inspired by publicly cited Databricks brand colors — not official brand assets.
+
+colors:
+  accent: "#D52B1E"          # Title, H1–H3, title rule, table header fill
+  white: "#FFFFFF"           # Table header text
+  near_black: "#1A1A1A"      # Body copy, table cells
+  muted_gray: "#666666"      # Note: lines / captions
+  alt_row: "#F7F7F7"         # Even table body rows
+  soft_border: "#E5E5E5"     # Table cell borders
+
+typography:
+  body_font: Calibri
+  heading_font: Calibri
+  title_size_pt: 22
+  h1_size_pt: 18
+  h2_size_pt: 14
+  h3_size_pt: 12
+  body_size_pt: 11
+  table_header_size_pt: 10
+  table_body_size_pt: 10
+  notes_size_pt: 9
+
+layout:
+  margin_inches: 1.0
+  line_spacing: 1.15
+  title_rule: true           # Thin accent border under the document title

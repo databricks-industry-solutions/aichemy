@@ -72,16 +72,16 @@ dbClient.test_query()
 
 # MAGIC %md
 # MAGIC ## Create functions as tools
-# MAGIC 1. `molecule_png_url` to get the molecule image URL from PubChem based on the CID
+# MAGIC 1. `molecule_png_url` to get the molecule image URL based on the compound CID
 # MAGIC 2. `get_embedding` to compute molecular fingerprint embeddings for searching ZINC vector store
-# MAGIC 2. `predict_admet` to predict ADMET properties using an external multi-task ChemProp MPNN model.
+# MAGIC 3. `predict_admet` to predict ADMET properties using an external multi-task ChemProp MPNN model.
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC CREATE OR REPLACE FUNCTION healthcare_lifesciences.qsar.molecule_png_url(cid INTEGER)
 # MAGIC RETURNS STRING
-# MAGIC COMMENT 'Returns the molecule image url of a CID from PubChem'
+# MAGIC COMMENT 'Returns the molecule image url for a compound CID'
 # MAGIC LANGUAGE PYTHON
 # MAGIC AS $$
 # MAGIC url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{str(cid)}/png"

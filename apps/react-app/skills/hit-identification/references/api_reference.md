@@ -46,57 +46,57 @@ target(ensemblId: String!) {
 
 ---
 
-## PubChem MCP Tools
+## ChEMBL MCP Tools
 
 ### Compound Search & Info
 
 | Tool | Purpose |
 |------|---------|
-| `PubChem:search_compounds` | Search by name, CAS, formula, or identifier |
-| `PubChem:get_compound_info` | Get detailed info by CID |
-| `PubChem:get_compound_synonyms` | Get all names and synonyms |
-| `PubChem:get_compound_properties` | Get MW, logP, TPSA, etc. |
+| `ChEMBL:search_compounds` | Search by name, CAS, formula, or identifier |
+| `ChEMBL:get_compound_info` | Get detailed info by ChEMBL ID |
+| `ChEMBL:get_compound_synonyms` | Get all names and synonyms |
+| `ChEMBL:get_compound_properties` | Get MW, logP, TPSA, etc. |
 
 ### Structure-Based Search
 
 | Tool | Purpose |
 |------|---------|
-| `PubChem:search_by_smiles` | Exact match by SMILES |
-| `PubChem:search_by_inchi` | Search by InChI/InChI key |
-| `PubChem:search_similar_compounds` | Tanimoto similarity search |
-| `PubChem:substructure_search` | Find compounds with substructure |
+| `ChEMBL:search_by_smiles` | Exact match by SMILES |
+| `ChEMBL:search_by_inchi` | Search by InChI/InChI key |
+| `ChEMBL:search_similar_compounds` | Tanimoto similarity search |
+| `ChEMBL:substructure_search` | Find compounds with substructure |
 
 ### Bioactivity & Target
 
 | Tool | Purpose |
 |------|---------|
-| `PubChem:search_by_target` | Find compounds tested against a target |
-| `PubChem:get_compound_bioactivities` | Get all bioassay results for a compound |
-| `PubChem:search_bioassays` | Search assays by target/description |
-| `PubChem:get_assay_info` | Get assay details by AID |
-| `PubChem:compare_activity_profiles` | Compare activities across compounds |
+| `ChEMBL:search_by_target` | Find compounds tested against a target |
+| `ChEMBL:get_compound_bioactivities` | Get all bioassay results for a compound |
+| `ChEMBL:search_bioassays` | Search assays by target/description |
+| `ChEMBL:get_assay_info` | Get assay details by AID |
+| `ChEMBL:compare_activity_profiles` | Compare activities across compounds |
 
 ### Safety & Regulatory
 
 | Tool | Purpose |
 |------|---------|
-| `PubChem:get_safety_data` | GHS hazard classifications |
-| `PubChem:get_toxicity_info` | LD50, carcinogenicity, mutagenicity |
-| `PubChem:get_regulatory_info` | FDA, EPA, international data |
+| `ChEMBL:get_safety_data` | GHS hazard classifications |
+| `ChEMBL:get_toxicity_info` | LD50, carcinogenicity, mutagenicity |
+| `ChEMBL:get_regulatory_info` | FDA, EPA, international data |
 
 ### References & Cross-Links
 
 | Tool | Purpose |
 |------|---------|
-| `PubChem:get_literature_references` | PubMed citations |
-| `PubChem:get_external_references` | Links to ChEMBL, DrugBank, KEGG, etc. |
-| `PubChem:search_patents` | Chemical patent information |
+| `ChEMBL:get_literature_references` | PubMed citations |
+| `ChEMBL:get_external_references` | Links to DrugBank, KEGG, etc. |
+| `ChEMBL:search_patents` | Chemical patent information |
 
 ---
 
 ## URL Formats
 
-- **PubChem Compound**: `https://pubchem.ncbi.nlm.nih.gov/compound/{CID}`
+- **ChEMBL Compound**: `https://www.ebi.ac.uk/chembl/compound_report_card/{CHEMBL_ID}`
 - **PubMed Article**: `https://pubmed.ncbi.nlm.nih.gov/{PMID}`
 
 ---

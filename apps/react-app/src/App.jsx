@@ -115,7 +115,7 @@ export default function App() {
 
   // DB backend status
   const [dbStatus, setDbStatus] = useState(null)
-  // External MCP server status (OpenTargets, PubChem, PubMed)
+  // External MCP server status (OpenTargets, ChEMBL, PubMed)
   const [mcpStatus, setMcpStatus] = useState({})
 
   const chatHistoryRef = useRef(null)

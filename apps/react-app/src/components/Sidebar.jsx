@@ -5,7 +5,7 @@ import modelsTxt from '/models.txt?raw'
 // Display names for all agent component keys returned by the backend
 const MCP_DISPLAY = {
   // external_mcp
-  pubchem:               '🧪 PubChem',
+  chembl:                '🧪 ChEMBL',
   // custom_mcp
   opentargets:           '🎯 OpenTargets',
   // uc_connections

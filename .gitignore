@@ -37,5 +37,8 @@ node_modules/
 .venv/
 venv/
 
+# Generated agent download artifacts (DOCX etc.)
+apps/react-app/artifacts/
+
 # SQLite databases (local dev)
 *.db

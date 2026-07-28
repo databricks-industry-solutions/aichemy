@@ -18,14 +18,14 @@ _models_txt = Path(__file__).parent.parent / "public" / "models.txt"
 MODELS = [m.strip() for m in _models_txt.read_text().splitlines() if m.strip()]
 
 ALL_MCPS = [
-    "pubchem", "opentargets", "pubmed", "bio/medrxiv",
+    "chembl", "opentargets", "pubmed", "bio/medrxiv",
     "clinical_trials", "openfda", "US_census", "cms",
     "bioportal", "biocontext", "zinc_vector_search", "drugbank", "chem_utils",
 ]
 
 MCP_COMBOS = [
     ("All MCPs",           ALL_MCPS),
-    ("PubChem only",       ["pubchem", "chem_utils"]),
+    ("ChEMBL only",       ["chembl", "chem_utils"]),
     ("US Census only",     ["US_census", "chem_utils"]),
     ("ClinTrials + PubMed", ["clinical_trials", "pubmed", "chem_utils"]),
     ("No external MCPs",   ["zinc_vector_search", "drugbank", "chem_utils"]),

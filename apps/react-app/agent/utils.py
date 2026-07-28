@@ -391,7 +391,11 @@ def _keepalive_loop(get_state, keepalive_secs=600) -> None:
                 _touch_activity()
 
 
-def _collect_tool_metadata(mcp_tools: list, cfg: dict) -> dict[str, list[dict]]:
+def _collect_tool_metadata(
+    mcp_tools: list,
+    cfg: dict,
+    extra_tools: dict[str, list] | None = None,
+) -> dict[str, list[dict]]:
     """Build a {agent_name: [{name, description}, ...]} dict from live tools and config."""
     from databricks_langchain.uc_ai import UCFunctionToolkit
     from agent.utils_memory import memory_write_tools
@@ -417,6 +421,9 @@ def _collect_tool_metadata(mcp_tools: list, cfg: dict) -> dict[str, list[dict]]:
         result[agent_name] = [
             {"name": agent_name, "description": rc.get("tool_description", "")}
         ]
+    if extra_tools:
+        for group_name, tools in extra_tools.items():
+            result[group_name] = [_meta(t) for t in tools]
     return result
 
 

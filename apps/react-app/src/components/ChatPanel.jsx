@@ -3,6 +3,41 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { WORKFLOWS_BY_NAME, PLACEHOLDER_LABELS } from '../workflows.js'
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || ''
+
+function isArtifactDownloadHref(href) {
+  if (!href) return false
+  try {
+    const url = new URL(href, window.location.origin)
+    return url.pathname.startsWith('/api/artifacts/')
+  } catch {
+    return /\/api\/artifacts\//.test(href) || /\.docx($|\?)/i.test(href)
+  }
+}
+
+function MarkdownLink({ href, children, ...props }) {
+  if (isArtifactDownloadHref(href)) {
+    const downloadUrl = href.startsWith('http') ? href : `${API_BASE_URL}${href}`
+    const label = typeof children === 'string' ? children : 'Download document'
+    return (
+      <a
+        href={downloadUrl}
+        className="docx-download-link"
+        download
+        {...props}
+      >
+        <span className="docx-download-icon" aria-hidden="true">⬇</span>
+        {label}
+      </a>
+    )
+  }
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+      {children}
+    </a>
+  )
+}
+
 function ElapsedTimer() {
   const [seconds, setSeconds] = useState(0)
   const ref = useRef(null)
@@ -181,7 +216,7 @@ export default function ChatPanel({
             <div className="help-dialog-body">
               <h4>Recommended demo setup</h4>
               <ol>
-                <li>Select Claude Sonnet 4.5, PubChem, ZINC and Chem Utils.</li>
+                <li>Select Claude Sonnet 4.5, ChEMBL, ZINC and Chem Utils.</li>
                 <li>Hit <strong>Refresh</strong>.</li>
                 <li>Click on the <strong>+ New Project</strong> button to start a new conversation.</li>
               </ol>
@@ -251,7 +286,12 @@ export default function ChatPanel({
             <div className="message-content">
               {msg.role === 'assistant' ? (
                 <>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{ a: MarkdownLink }}
+                  >
+                    {msg.content}
+                  </ReactMarkdown>
                   {msg.traceId && (
                     <div className="trace-id-row">
                       <a

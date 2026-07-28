@@ -50,6 +50,7 @@ from agent.utils import (
     wrap_mcp_tools_with_resilience,
 )
 from agent.utils_memory import memory_write_tools
+from agent.tools_docx import create_docx_tool
 
 # ---------------------------------------------------------------------------
 # Config
@@ -210,17 +211,10 @@ def _build_agent(cfg: dict) -> StateGraph:
 
     llm = ChatDatabricks(endpoint=cfg["llm_endpoint"])
 
-    # --- Utility functions agent ---
-    function_agents = []
-    for agent_name, functions in cfg["uc_functions"].items():
-        tools = UCFunctionToolkit(function_names=functions).tools
-        function_agent = create_agent(
-            llm,
-            tools=tools,
-            system_prompt=cfg["prompts"][agent_name],
-            name=agent_name,
-        )
-        function_agents.append(function_agent)
+    # --- Unity Catalog function tools (called directly by the supervisor) ---
+    uc_tools = []
+    for functions in cfg["uc_functions"].values():
+        uc_tools.extend(UCFunctionToolkit(function_names=functions).tools)
 
     # --- Genie text-to-SQL tools (called directly by the supervisor) ---
     # Exposing Genie as a tool instead of a GenieAgent sub-agent removes the extra
@@ -229,6 +223,10 @@ def _build_agent(cfg: dict) -> StateGraph:
     genie_tools = []
     for agent_name, genie_config in cfg["genie"].items():
         genie_tools.append(_build_genie_tool(agent_name, genie_config, ws_client, StructuredTool, Genie))
+
+    # --- Document export (DOCX download via /api/artifacts) ---
+    docx_tool = create_docx_tool()
+    supervisor_tools = genie_tools + uc_tools + [docx_tool]
 
     # --- ZINC vector search agent ---
     retriever_agents = []
@@ -275,7 +273,7 @@ def _build_agent(cfg: dict) -> StateGraph:
         )
         retriever_agents.append(retreiver_agent)
 
-    # --- MCP agents (PubChem / PubMed / OpenTargets) ---
+    # --- MCP agents (ChEMBL / PubMed / OpenTargets) ---
     servers = build_mcp_list(cfg, ws_client=ws_client)
 
     global mcp_client
@@ -309,13 +307,13 @@ def _build_agent(cfg: dict) -> StateGraph:
     )
 
     global _agent_tools
-    _agent_tools = _collect_tool_metadata(mcp_tools, cfg)
+    _agent_tools = _collect_tool_metadata(mcp_tools, cfg, extra_tools={"documents": [docx_tool]})
 
     # --- Supervisor ---
     workflow = create_supervisor(
-        [mcp_agent, mem_agent] + function_agents + retriever_agents,
+        [mcp_agent, mem_agent] + retriever_agents,
         model=llm,
-        tools=genie_tools,
+        tools=supervisor_tools,
         prompt=cfg["prompts"]["supervisor"],
         output_mode="last_message",
         add_handoff_messages=False,

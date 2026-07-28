@@ -36,7 +36,7 @@ export const WORKFLOWS = [
     label: 'ADME Assessment',
     caption: 'Based on a compound, get its ADME and other properties',
     canned_prompt:
-      'Use PubChem to get ${compoundProps} properties of ${workflowInput}.',
+      'Use ChEMBL to get ${compoundProps} properties of ${workflowInput}.',
     input_placeholder: 'your input, e.g., acetaminophen, semaglutide, CHEMBL25',
     variant: 'adme',
   },
@@ -71,6 +71,14 @@ export const WORKFLOWS = [
     canned_prompt:
       'Size the market oppportunities for ${workflowInput}. Consider potential indications, coverage, eligible patient demographics, and competitor landscape.',
     input_placeholder: 'your input, e.g., semaglutide, vemurafenib',
+  },
+  {
+    name: 'create-docx-report',
+    label: 'Create .docx Report',
+    caption: 'Export findings as a branded Word (.docx) report',
+    canned_prompt:
+      'Using the create-docx-report skill, create a branded Word (.docx) report about ${workflowInput}. Gather any needed evidence first, then call create_docx with the prescribed section structure and include the download link in your reply.',
+    input_placeholder: 'topic or compound, e.g., EGFR hits, orforglipron safety',
   },
 ]
 

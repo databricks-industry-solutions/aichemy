@@ -1,17 +1,17 @@
 ---
 name: hit-identification
-description: Based on a target, get its associated drugs. Identify small molecule hits for therapeutic targets by querying Open Targets and PubChem. Use when the user provides a gene symbol (e.g., EGFR, BRAF, KRAS) or protein name and wants to find known compounds, drugs, or chemical matter with activity against that target. Returns compound identifiers, names, bioactivity data, clinical trial phases, mechanism of action summaries, and supporting literature with PubMed links. Triggers include requests like "find hits for [target]", "what compounds bind [gene]", "identify drugs targeting [protein]", "small molecules for [target]", or "hit identification for [gene symbol]".
+description: Based on a target, get its associated drugs. Identify small molecule hits for therapeutic targets by querying Open Targets and ChEMBL. Use when the user provides a gene symbol (e.g., EGFR, BRAF, KRAS) or protein name and wants to find known compounds, drugs, or chemical matter with activity against that target. Returns compound identifiers, names, bioactivity data, clinical trial phases, mechanism of action summaries, and supporting literature with PubMed links. Triggers include requests like "find hits for [target]", "what compounds bind [gene]", "identify drugs targeting [protein]", "small molecules for [target]", or "hit identification for [gene symbol]".
 ---
 
 # Hit Identification Skill
 
-Identify known small molecule hits for a therapeutic target by querying Open Targets and PubChem via MCP tools.
+Identify known small molecule hits for a therapeutic target by querying Open Targets and ChEMBL via MCP tools.
 
 ## Workflow Overview
 
 1. **Resolve target identifier** → Convert gene symbol/protein name to Ensembl ID
 2. **Query Open Targets** → Get associated drugs, clinical phases, mechanism of action, and literature
-3. **Query PubChem** → Get compound IDs, bioactivity data, and additional references
+3. **Query ChEMBL** → Get compound IDs, bioactivity data, and additional references
 4. **Merge and prioritize** → Combine results and rank by association score, trial phase, bioactivity
 5. **Format output** → Present top 25 hits as markdown table
 
@@ -25,7 +25,7 @@ Open Targets:search_entities(query_strings=["<user_input>"])
 
 Select the result where `entity` = "target" to get the Ensembl gene ID (e.g., `ENSG00000146648` for EGFR).
 
-## Step 2: Query Open Targets and PubChem for Known Drugs
+## Step 2: Query Open Targets and ChEMBL for Known Drugs
 
 ### 2a. Query Open Targets
 
@@ -75,42 +75,42 @@ Extract from results:
 - **MoA**: `mechanismsOfAction.rows[].mechanismOfAction`
 - **PMIDs**: Filter `references` where `source` = "PubMed"
 
-### 2b. Query PubChem by Target
+### 2b. Query ChEMBL by Target
 
-Also search PubChem for compounds tested against the target:
+Also search ChEMBL for compounds tested against the target:
 
 ```
-PubChem:search_by_target(target_name="<gene_symbol>")
+ChEMBL:search_by_target(target_name="<gene_symbol>")
 ```
 
 This returns compounds with bioassay data against the target, including those not yet in Open Targets. Merge these results with Open Targets hits, avoiding duplicates.
 
-## Step 3: Enrich Compound Data from PubChem
+## Step 3: Enrich Compound Data from ChEMBL
 
-Use **PubChem MCP tools** to enrich compound information for hits from Steps 2a and 2b.
+Use **ChEMBL MCP tools** to enrich compound information for hits from Steps 2a and 2b.
 
-### 3a. Get PubChem CID and Basic Info
+### 3a. Get ChEMBL ID and Basic Info
 
 For each drug name or ChEMBL ID from Open Targets:
 
 ```
-PubChem:search_compounds(query="<drug_name>")
+ChEMBL:search_compounds(query="<drug_name>")
 ```
 
-Or search by external reference:
+Or get external references:
 
 ```
-PubChem:get_external_references(cid=<CID>)
+ChEMBL:get_external_references(chembl_id=<CHEMBL_ID>)
 ```
 
-This returns cross-references to ChEMBL, DrugBank, KEGG, etc.
+This returns cross-references to DrugBank, KEGG, etc.
 
 ### 3b. Get Compound Details
 
-Once you have the CID:
+Once you have the ChEMBL ID:
 
 ```
-PubChem:get_compound_info(cid=<CID>)
+ChEMBL:get_compound_info(chembl_id=<CHEMBL_ID>)
 ```
 
 Returns: molecular formula, weight, SMILES, InChI, synonyms.
@@ -120,7 +120,7 @@ Returns: molecular formula, weight, SMILES, InChI, synonyms.
 Query bioassay results for the compound:
 
 ```
-PubChem:get_compound_bioactivities(cid=<CID>)
+ChEMBL:get_compound_bioactivities(chembl_id=<CHEMBL_ID>)
 ```
 
 Extract activity values (IC50, EC50, Ki, etc.). Filter for assays related to the target gene.
@@ -128,7 +128,7 @@ Extract activity values (IC50, EC50, Ki, etc.). Filter for assays related to the
 ### 3d. Get Literature References (PMIDs)
 
 ```
-PubChem:get_literature_references(cid=<CID>)
+ChEMBL:get_literature_references(chembl_id=<CHEMBL_ID>)
 ```
 
 Returns PubMed citations. Use only PMIDs also referenced in Open Targets or directly related to target activity.
@@ -154,9 +154,9 @@ Present results in this format:
 **Total hits found**: [N]  
 **Showing**: Top 25 ranked by association score, trial phase, and bioactivity
 
-| Rank | Name | CID | Bioactivity | Phase | MoA Summary | References |
-|------|------|-----|-------------|-------|-------------|------------|
-| 1 | [Drug Name] | [CID](https://pubchem.ncbi.nlm.nih.gov/compound/[CID]) | IC50: X nM | 4 | [Brief MoA] | [PMID1](https://pubmed.ncbi.nlm.nih.gov/[PMID1]), [PMID2](https://pubmed.ncbi.nlm.nih.gov/[PMID2]) |
+| Rank | Name | ChEMBL ID | Bioactivity | Phase | MoA Summary | References |
+|------|------|-----------|-------------|-------|-------------|------------|
+| 1 | [Drug Name] | [CHEMBL_ID](https://www.ebi.ac.uk/chembl/compound_report_card/[CHEMBL_ID]) | IC50: X nM | 4 | [Brief MoA] | [PMID1](https://pubmed.ncbi.nlm.nih.gov/[PMID1]), [PMID2](https://pubmed.ncbi.nlm.nih.gov/[PMID2]) |
 | 2 | ... | ... | ... | ... | ... | ... |
 ```
 
@@ -166,7 +166,7 @@ Present results in this format:
 |--------|---------|
 | Rank | Priority ranking (1 = highest) |
 | Name | Compound or drug name |
-| CID | PubChem Compound ID with hyperlink |
+| ChEMBL ID | ChEMBL compound ID with hyperlink |
 | Bioactivity | Most relevant activity value (IC50, Ki, EC50) with units |
 | Phase | Clinical trial phase (0-4, or "-" if none) |
 | MoA Summary | Brief mechanism of action (≤50 words) |
@@ -176,7 +176,7 @@ Present results in this format:
 
 - **Target not found**: If `search_entities` returns no target match, inform user and suggest alternative spellings or synonyms
 - **No drugs found**: If Open Targets returns empty `knownDrugs`, report this and suggest checking related targets or pathway members
-- **PubChem lookup fails**: If CID lookup fails for a ChEMBL ID, include the compound with ChEMBL ID only and note "CID not found"
+- **ChEMBL lookup fails**: If enrichment fails for a ChEMBL ID, include the compound with the ID from Open Targets and note "enrichment unavailable"
 - **Missing bioactivity**: If no assay data available, use "-" in the Bioactivity column
 
 ## Example Usage
@@ -186,5 +186,5 @@ Present results in this format:
 **Claude workflow**:
 1. `search_entities(["BRAF"])` → `ENSG00000157764`
 2. Query Open Targets GraphQL for target drugs
-3. For each ChEMBL ID, fetch PubChem CID and bioassay data
+3. For each ChEMBL ID, fetch bioassay and compound data from ChEMBL
 4. Merge, rank, and output top 25 as markdown table

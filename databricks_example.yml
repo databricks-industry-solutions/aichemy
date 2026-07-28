@@ -94,7 +94,7 @@ resources:
       description: >-
         AI Chemistry assistant — chat with Drugbank (FDA-approved drugs),
         search ZINC molecular database by fingerprint similarity,
-        and query PubChem / PubMed / OpenTargets via MCP.
+        and query ChEMBL / PubMed / OpenTargets via MCP.
       source_code_path: ./apps/react-app
       resources:
         - name: sp-client-id
@@ -107,7 +107,7 @@ resources:
             scope: ${var.secret_scope}
             key: client_secret
             permission: READ
-        - name: pubchem-api-token
+        - name: chembl-api-token
           secret:
             scope: ${var.secret_scope}
             key: pubchem_glama_api
@@ -159,9 +159,9 @@ resources:
           notebook_task:
             notebook_path: ./notebooks/4_connect_ext_mcp_opentarget.py
         
-        - task_key: connect_pubchem_mcp
+        - task_key: connect_chembl_mcp
           notebook_task:
-            notebook_path: ./notebooks/4_connect_ext_mcp_pubchem.py
+            notebook_path: ./notebooks/4_connect_ext_mcp_chembl.py
 
         - task_key: connect_pubmed_mcp
           notebook_task:

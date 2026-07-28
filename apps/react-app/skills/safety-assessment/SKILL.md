@@ -1,15 +1,15 @@
 ---
 name: safety-assessment
-description: Based on a compound, get its safety info. Assess compound safety profile including toxicity, hazard classifications, and regulatory information using PubChem and PubMed.
+description: Based on a compound, get its safety info. Assess compound safety profile including toxicity, hazard classifications, and regulatory information using ChEMBL and PubMed.
 ---
 
 # Safety Assessment Skill
 
-Assess compound safety via PubChem (GHS hazards, toxicity, regulatory) and PubMed (literature evidence).
+Assess compound safety via ChEMBL (GHS hazards, toxicity, regulatory) and PubMed (literature evidence).
 
 ## Workflow
 
-1. **Resolve compound** → PubChem CID
+1. **Resolve compound** → ChEMBL ID
 2. **Safety data** → GHS hazard classifications
 3. **Toxicity info** → LD50, carcinogenicity, mutagenicity, reproductive toxicity
 4. **Regulatory info** → FDA, EPA, REACH status
@@ -18,11 +18,11 @@ Assess compound safety via PubChem (GHS hazards, toxicity, regulatory) and PubMe
 
 ## Step 1: Resolve Compound Identifier
 
-Use the appropriate PubChem search tool based on input type:
-- By name: `PubChem:search_compounds(query="<name>")`
-- By SMILES: `PubChem:search_by_smiles(smiles="<SMILES>")`
-- By InChI: `PubChem:search_by_inchi(inchi="<InChI>")`
-- By CAS: `PubChem:search_by_cas_number(cas_number="<CAS>")`
+Use the appropriate ChEMBL search tool based on input type:
+- By name: `ChEMBL:search_compounds(query="<name>")`
+- By SMILES: `ChEMBL:search_by_smiles(smiles="<SMILES>")`
+- By InChI: `ChEMBL:search_by_inchi(inchi="<InChI>")`
+- By CAS: `ChEMBL:search_by_cas_number(cas_number="<CAS>")`
 
 ## Step 2: Get Safety Data
 
@@ -30,13 +30,13 @@ Use the appropriate PubChem search tool based on input type:
 
 ## Step 3: Get Toxicity Information
 
-`PubChem:get_toxicity_info(cid=<CID>)` — returns LD50/LC50 values, IARC/NTP carcinogenicity classifications, Ames test mutagenicity, and reproductive toxicity data.
+`ChEMBL:get_toxicity_info(chembl_id=<CHEMBL_ID>)` — returns LD50/LC50 values, IARC/NTP carcinogenicity classifications, Ames test mutagenicity, and reproductive toxicity data.
 
-For environmental toxicity: `PubChem:assess_environmental_fate(cid=<CID>)`
+For environmental toxicity: `ChEMBL:assess_environmental_fate(chembl_id=<CHEMBL_ID>)`
 
 ## Step 4: Get Regulatory Information
 
-`PubChem:get_regulatory_info(cid=<CID>)` — returns FDA approval/warnings, EPA registration, REACH status, and other agency data.
+`ChEMBL:get_regulatory_info(chembl_id=<CHEMBL_ID>)` — returns FDA approval/warnings, EPA registration, REACH status, and other agency data.
 
 ## Step 5: Search PubMed for Evidence
 
@@ -48,7 +48,7 @@ Also search for: `<compound> carcinogenicity`, `<compound> safety`, `<compound> 
 
 Get metadata for relevant PMIDs: `PubMed:get_article_metadata(pmids=[...])`
 
-Cross-reference with: `PubChem:get_literature_references(cid=<CID>)`
+Cross-reference with: `ChEMBL:get_literature_references(chembl_id=<CHEMBL_ID>)`
 
 ## Step 6: Format Output
 
@@ -56,7 +56,7 @@ Present as structured markdown with sections for GHS classification, toxicity da
 
 ## Error Handling
 
-- **Compound not found**: Suggest alternative names or ask for CID
+- **Compound not found**: Suggest alternative names or ask for ChEMBL ID
 - **Limited data**: Note gaps; some compounds lack comprehensive testing
 - **No PubMed results**: Note absence; suggest broader search terms
 - **Conflicting data**: Present all sources and note discrepancies

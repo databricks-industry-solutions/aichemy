@@ -46,6 +46,7 @@ from server.dataclass import (
     UpdateProjectRequest,
     RebuildRequest,
 )
+from server.artifacts import DOCX_MEDIA_TYPE, get_artifact
 
 load_env_from_app_yaml()
 init_mlflow()
@@ -231,6 +232,26 @@ async def delete_project(project_id: str):
     if not db.delete_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
     return {"ok": True}
+
+
+# -- Artifacts (DOCX downloads) --------------------------------------------
+
+
+@app.get("/api/artifacts/{artifact_id}")
+async def download_artifact(artifact_id: str):
+    """Serve a previously created agent artifact (e.g. .docx) for download."""
+    found = get_artifact(artifact_id)
+    if found is None:
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    file_path, meta = found
+    filename = meta.get("filename") or "document.docx"
+    media_type = meta.get("media_type") or DOCX_MEDIA_TYPE
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type="attachment",
+    )
 
 
 # -- Tools, Skills, Health --------------------------------------------------

@@ -22,6 +22,7 @@ uc_functions:
     - healthcare_lifesciences.qsar.predict_admet
 uc_connections:
   web: conn_you_web
+  chembl: climb_hls_chembl
   pubmed: climb_hls_pubmed
   opentargets: climb_hls_opentargets
   clinical_trials: climb_hls_clinicaltrials
@@ -30,7 +31,7 @@ uc_connections:
   cms: climb_hls_cms_coverage
   bioportal: climb_hls_bioportal
   biocontext: climb_hls_biocontext
-  kythera: conn_kythera_mcp
+  # kythera: conn_kythera_mcp
   # atropos: conn_atropos_mcp
 blacklisted_tools:
   - predict_admet_properties
@@ -42,21 +43,10 @@ blacklisted_tools:
   - assess_environmental_fate
   - get_safety_data
 external_mcp:
-  pubchem: 
-    url: https://glama.ai/endpoints/xb306rnopq/mcp
-    scope: aichemy
-    secret: pubchem_glama_api
   atropos: 
     url: https://ca-evidence-mcp.whitemeadow-2a817ebe.eastus.azurecontainerapps.io:443/mcp
     scope: aichemy
     secret: atropos_api
-  # pubmed: 
-  #   url: https://pubmed.mcp.climb.ai:443/mcp
-  #   scope: aichemy
-  #   secret: climb_api
-# custom_mcp:
-  # opentargets:
-  #   url: https://opentargets-mcp-2556758628403379.aws.databricksapps.com/mcp
 retriever:
   zinc_vector_search:
     vs_endpoint: dbdemos_vs_endpoint
@@ -86,21 +76,18 @@ example_questions:
   - List all the drugs in the GLP-1 agonists ATC class in DrugBank.
   - Get the latest review study on the GI toxicity of danuglipron.
 prompts:
-  chem_utils: >-
-    You are an agent with the following function tools
-    1. get_embedding to generate 1024-bit ECFP molecular fingerprint embeddings from SMILES. Get the SMILES from the PubChem MCP server. Do not fabricate SMILES.
-    2. molecule_png_url to display molecule image PNG files from PubChem website by CID in markdown.
-    3. predict_admet to predict ADMET properties calling a ChemProp MPNN model. This would require you first look up PubChem for SMILES as input to the ADMET prediction tool.
   zinc_vector_search: >-
     You search the ZINC database of 250,000 drug-like chemicals for structural similarity.
     Pass a SMILES string directly to your search tool, not the 1024-bit ECFP bitstring.
   mcp: >-
-    You are a multi-MCP server agent connected to several knowledge bases via MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, Kythera, Atropos.
+    You are a multi-MCP server agent connected to several knowledge bases via MCP servers such as ChEMBL, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, Kythera, Atropos.
     Kythera MCP retrieves the medical codes (e.g. SNOMED, ICD, RxNORM, CPT) corresponding to clinical concepts in natural language.
     Atropos MCP retrieves real-world evidence cohort studies from its Alexandria Library based on natural language requests. 
     Some of these MCP servers may be disabled in the UI so when listing tools, do check if the tool is disabled before listing it.
     If a tool call returns a response containing "not yet implemented", "not implemented", or "coming soon", treat that tool as unavailable for this request.
     Do not retry it. Instead, skip that step, note it as unavailable, and continue with the remaining steps using other available tools.
+    You only have MCP tools. The chem-utils Unity Catalog functions (predict_admet, get_embedding, molecule_png_url), ZINC search, the text-to-sql tools and create_docx belong to the supervisor, not to you.
+    Never attempt to call them. If the request needs one of them, return the MCP data you gathered (e.g. the SMILES from ChEMBL) and state which step the supervisor still needs to run.
   memory: >-
     You save and delete long-term user memories. Save when the user explicitly
     asks to remember something. Proactively save durable preferences, roles,
@@ -109,15 +96,16 @@ prompts:
     automatically before the conversation starts.
   supervisor: >-
     You are a supervisor agent that handles the routing to the following agents depending on the request: 
-    1. chem utils agent with tools for computing 1024-bit ECFP, getting the molecule image PNG URL from PubChem, and predicting ADMET properties using ChemProp MPNN model.
-    2. ZINC vector search agent for similarity search by SMILES (1024-bit ECFP computed internally from SMILES input)
-    3. text-to-sql agent querying DrugBank for FDA-approved drugs and their properties
-    4. text-to-sql agent querying medical and pharmacy claims data. When cohort building, use the Kythera MCP to translate clinical concepts to medical codes for cohort definitions.
-    5. memory agent that saves and deletes long-term user memories
-    6. mcp agent with MCP servers such as PubChem, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, You.com web search, Kythera clinical code mapper and Atropos Health RWE clinical studies library, depending on whether they are enabled in the UI
+    1. ZINC vector search agent for similarity search by SMILES (1024-bit ECFP computed internally from SMILES input)
+    2. text-to-sql agent querying DrugBank for FDA-approved drugs and their properties
+    3. text-to-sql agent querying medical and pharmacy claims data. When cohort building, use the Kythera MCP to translate clinical concepts to medical codes for cohort definitions.
+    4. memory agent that saves and deletes long-term user memories
+    5. mcp agent with MCP servers such as ChEMBL, PubMed, OpenTargets, ClinicalTrials, OpenFDA, US Census, CMS Coverage, BioPortal, BioContext, You.com web search, Kythera clinical code mapper and Atropos Health RWE clinical studies library, depending on whether they are enabled in the UI
+    You also have direct access to Unity Catalog function tools for computing 1024-bit ECFP, getting molecule image PNG URLs, and predicting ADMET properties using a ChemProp MPNN model. Get SMILES from ChEMBL before using tools that require it; do not fabricate SMILES.
+    The create_docx tool is also available directly to you and creates a downloadable Microsoft Word (.docx) file. When the user asks for a Word/DOCX/report export, call create_docx with a title and body content, then include the returned markdown download link verbatim in your final reply.
     Some of these agents or MCP servers may be disabled in the UI so when listing abilities, do check if the agent or MCP server is disabled before listing.
     
-    Avoid relying on your trained knowledge. Always use the tools available to you. For example, look up the CID and SMILES from the PubChem MCP server.
+    Avoid relying on your trained knowledge. Always use the tools available to you. For example, look up the ChEMBL ID and SMILES from the ChEMBL MCP server.
 
     Because you are an autonomous multi-agent system, do not ask for more follow up information.
     Instead, use chain-of-thought to reason and break down the request into achievable steps 
@@ -142,18 +130,33 @@ prompts:
      Do NOT retry it. Either try a different agent if the task is unanswered, 
      or inform the user no results were found.
     c) NEVER call the same sub-agent more than twice for the same user question.
+    d) MULTI-STEP SKILL EXCEPTION: If the user request or an active skill workflow
+     (e.g. ADME-assessment) requires more steps after an MCP lookup, a sub-agent
+     returning SMILES, ChEMBL metadata, or literature is NOT task completion.
+     Do NOT stop and ask the user for permission to continue. Immediately run the
+     next required supervisor-owned tools (predict_admet, create_docx) until the
+     full workflow is done, then reply once with the final result.
 
     3. INVENTORY QUESTIONS — ANSWER DIRECTLY, NEVER DELEGATE: If the user asks what tools,
     agents, capabilities, databases, or data sources you have access to (e.g. "what can you do?",
     "do you have a ZINC tool?", "what databases are connected?", "list your tools"), answer
-    DIRECTLY from your own list of agents (1-5 above). NEVER hand off an inventory question to
+    DIRECTLY from your own list of agents (1-7 above). NEVER hand off an inventory question to
     a single sub-agent — each sub-agent only knows its own tools and will incorrectly deny having
     capabilities that live in sibling agents (e.g. the mcp agent does not know that
-    zinc_vector_search exists). Always include ZINC vector search and the DrugBank text-to-SQL
-    agent in your inventory answer when they are enabled.
+    zinc_vector_search exists). Always include ZINC vector search, the DrugBank text-to-SQL
+    agent, and the create_docx document export tool in your inventory answer when they are enabled.
 
     4. MOLECULAR SEARCH QUESTIONS:
-    If a ZINC related question is asked, route to the ZINC vector search agent. It is not a tool in the MCP agent but is its own agent. Avoid using the search_similar_compounds from PubChem MCP unless asked to search outside the ZINC database.
+    If a ZINC related question is asked, route to the ZINC vector search agent. It is not a tool in the MCP agent but is its own agent. Avoid using the search_similar_compounds from ChEMBL MCP unless asked to search outside the ZINC database.
 
     5. ADMET PREDICTION QUESTIONS:
-    If a question is asked about predicting ADMET properties, route to the chem utils agent with the predict_admet tool. Do not use the predict_admet_properties tool from the PubChem MCP server.
+    The chem-utils tools (predict_admet, get_embedding, molecule_png_url) are yours alone — no sub-agent can run them.
+    For a multi-step request such as an ADME assessment, delegate only the MCP lookups (e.g. ChEMBL for SMILES, PubMed for literature),
+    then call predict_admet yourself with the SMILES the mcp agent returned. Never delegate an ADMET prediction and never ask the mcp
+    agent to run it. Do not use the predict_admet_properties tool from the ChEMBL MCP server.
+    NEVER ask the user for permission or confirmation before calling predict_admet — if you have a valid SMILES from ChEMBL (or the user),
+    call predict_admet immediately in the same turn without pausing. The same applies to create_docx when the skill or user asks for a report:
+    run it automatically after the assessment is complete; do not ask "shall I export?" or "would you like me to run predict_admet?".
+
+    6. DOCUMENT EXPORT (DOCX):
+    If the user asks to export, download, or save results as a Word/DOCX/document file, call the create_docx tool yourself (do not delegate). Pass a clear title and the content to include (headings, bullets, tables OK as light markdown). Always paste the markdown download link from the tool result into your final reply so the user can download the file.
