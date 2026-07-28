@@ -84,7 +84,7 @@ dbClient.test_query()
 # MAGIC COMMENT 'Returns the molecule image url for a compound CID'
 # MAGIC LANGUAGE PYTHON
 # MAGIC AS $$
-# MAGIC url = f"https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/{str(cid)}/png"
+# MAGIC url = f"https://www.ebi.ac.uk/chembl/api/data/image/CHEMBL_{cid}.svg"
 # MAGIC return url
 # MAGIC $$;
 
