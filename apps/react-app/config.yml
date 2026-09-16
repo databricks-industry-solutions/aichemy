@@ -22,6 +22,7 @@ uc_functions:
     - healthcare_lifesciences.qsar.predict_admet
 uc_connections:
   web: conn_you_web
+  pubchem: climb_hls_chembl
   pubmed: climb_hls_pubmed
   opentargets: climb_hls_opentargets
   clinical_trials: climb_hls_clinicaltrials
@@ -42,24 +43,16 @@ blacklisted_tools:
   - assess_environmental_fate
   - get_safety_data
 external_mcp:
-  pubchem: 
-    url: https://glama.ai/endpoints/xb306rnopq/mcp
-    scope: aichemy
-    secret: pubchem_glama_api
   atropos: 
     url: https://ca-evidence-mcp.whitemeadow-2a817ebe.eastus.azurecontainerapps.io:443/mcp
     scope: aichemy
     secret: atropos_api
-  # pubmed: 
-  #   url: https://pubmed.mcp.climb.ai:443/mcp
-  #   scope: aichemy
-  #   secret: climb_api
 # custom_mcp:
   # opentargets:
   #   url: https://opentargets-mcp-2556758628403379.aws.databricksapps.com/mcp
 retriever:
   zinc_vector_search:
-    vs_endpoint: dbdemos_vs_endpoint
+    vs_endpoint: aichemy_endpoints
     vs_index: healthcare_lifesciences.qsar.zinc_vs
     vs_source: healthcare_lifesciences.qsar.zinc15_250k_full
     embedding: databricks-bge-large-en
